@@ -115,7 +115,7 @@ async function bootstrap() {
         'JWT-auth',
       )
       .addServer('http://localhost:51213', 'Development Server')
-      .addServer('https://restapi-social-media-conversation.onrender.com', 'Production Server')
+      .addServer('https://hcm201-restapi-with-nestjs-postgres.onrender.com', 'Production Server')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
@@ -235,7 +235,7 @@ async function bootstrap() {
           display: block !important;
           width: 120px !important;
           height: 120px !important;
-          background-image: url('https://cdn.24h.com.vn/upload/3-2023/images/2023-07-14/anh-1-1689300804-608-width650height867.jpg') !important;
+          background-image: url('https://cdn.s99.vn/z0/f9bea713f26789befe7eac8dba4fac57/p/0bf6nbpxkt/9fa9fbd0d552f07bce13005b630d9179.jpeg') !important;
           background-size: cover !important;
           background-repeat: no-repeat !important;
           background-position: center !important;
