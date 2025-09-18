@@ -1,7 +1,7 @@
 services:
-  # Main API Application (Docker) - Standalone Test
+  # Debate System API (Docker)
   - type: web
-    name: smartchat-api-test
+    name: debate-system-api
     env: docker
     plan: free
     dockerfilePath: ./Dockerfile.simple
@@ -10,14 +10,16 @@ services:
         value: production
       - key: PORT
         value: 51213
-      # Use external database for testing (will skip connection)
+      # Database (set real value in dashboard)
       - key: DATABASE_URL
-        value: postgresql://postgres:postgres@localhost:5432/smartchat_db
-      # Disable Redis for now
+        sync: false
+      # Redis (optional). Set via dashboard if used
       - key: REDIS_HOST
-        value: disabled
+        sync: false
       - key: REDIS_PORT
-        value: 6379
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
       - key: AUTH_JWT_SECRET
         generateValue: true
       - key: AUTH_REFRESH_SECRET
@@ -35,7 +37,15 @@ services:
       - key: MAIL_PORT
         value: 587
       - key: MAIL_USER
-        value: huyit2003@gmail.com
+        sync: false
       - key: MAIL_PASSWORD
-        value: tgob nbod eitn grpe
+        sync: false
+      - key: MAIL_SECURE
+        value: false
+      - key: MAIL_DEFAULT_EMAIL
+        sync: false
+      - key: MAIL_DEFAULT_NAME
+        value: Debate System
+      - key: GOOGLE_CLIENT_ID
+        sync: false
     healthCheckPath: /health 
