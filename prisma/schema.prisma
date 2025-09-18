@@ -1,0 +1,116 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String     @id @default(cuid())
+  email       String     @unique
+  username    String     @unique
+  password    String?    // Nullable for Google OAuth users
+  firstName   String?
+  lastName    String?
+  fullName    String?
+  avatar      String?
+  phone       Int?
+  dateOfBirth DateTime?
+  gender      Gender?
+  bio         String?
+  location    String?
+  website     String?
+  role        UserRole   @default(USER)
+  status      UserStatus @default(OFFLINE)
+  isVerified  Boolean    @default(false)
+  hash        String?
+  hashExpires DateTime?
+  isActive    Boolean    @default(true)
+  lastSeen    DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // OAuth fields
+  googleId    String?    @unique
+  provider    String?    @default("local") // "local" or "google"
+
+  // Debate Relations
+  topics      Topic[]    @relation("UserTopics")
+  arguments   Argument[]
+
+  @@map("users")
+}
+
+model Topic {
+  id          String     @id @default(cuid())
+  title       String
+  description String?    @db.Text
+  ownerId     String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Relations
+  owner     User       @relation("UserTopics", fields: [ownerId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@map("topics")
+}
+
+model Question {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  topicId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  topic     Topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  arguments Argument[]
+
+  @@map("questions")
+}
+
+model Argument {
+  id          String   @id @default(cuid())
+  body        String   @db.Text
+  authorId    String
+  questionId  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  author   User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("arguments")
+}
+
+// ==================== ENUMS ====================
+
+enum UserStatus {
+  ONLINE
+  OFFLINE
+  AWAY
+  BUSY
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}

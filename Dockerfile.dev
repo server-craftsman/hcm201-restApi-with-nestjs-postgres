@@ -1,0 +1,51 @@
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install pnpm, curl for health checks, and OpenSSL for Prisma
+RUN npm install -g pnpm && \
+    apk add --no-cache curl openssl postgresql-client dos2unix
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Copy Prisma schema BEFORE installing dependencies
+COPY prisma ./prisma/
+
+# Install dependencies (this will now work because prisma schema is available)
+RUN pnpm install
+
+# Generate Prisma client
+RUN pnpm prisma generate
+
+# Copy configuration files
+COPY tsconfig.json nest-cli.json ./
+
+# Copy ALL scripts directory (since .dockerignore now allows it)
+COPY scripts ./scripts/
+
+# Fix line endings and set permissions for shell scripts
+RUN dos2unix ./scripts/*.sh && \
+    chmod +x ./scripts/*.sh
+
+# Create src directory (will be mounted as volume)
+RUN mkdir -p src
+
+# Set environment variables for file watching
+ENV CHOKIDAR_USEPOLLING=true
+ENV CHOKIDAR_INTERVAL=1000
+
+# Expose port
+EXPOSE 51213
+
+# Start development server with hot reload
+CMD ["sh", "-c", "\
+    echo '⏳ Waiting for database...' && \
+    while ! pg_isready -h $DATABASE_HOST -p $DATABASE_PORT -U $DATABASE_USERNAME -q; do sleep 2; done && \
+    echo '📦 Generating Prisma client...' && \
+    pnpm prisma generate && \
+    echo '🗄️ Pushing database schema...' && \
+    pnpm prisma db push && \
+    echo '🌟 Starting application...' && \
+    pnpm start:dev"]

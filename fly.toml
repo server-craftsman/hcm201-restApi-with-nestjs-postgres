@@ -1,0 +1,28 @@
+app = "smartchat-api"
+primary_region = "sgn"
+
+[build]
+  dockerfile = "Dockerfile.prod"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "51213"
+
+[http_service]
+  internal_port = 51213
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/health"
+  timeout = "5s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512 

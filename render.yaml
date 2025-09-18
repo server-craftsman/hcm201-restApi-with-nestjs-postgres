@@ -1,0 +1,41 @@
+services:
+  # Main API Application (Docker) - Standalone Test
+  - type: web
+    name: smartchat-api-test
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.simple
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 51213
+      # Use external database for testing (will skip connection)
+      - key: DATABASE_URL
+        value: postgresql://postgres:postgres@localhost:5432/smartchat_db
+      # Disable Redis for now
+      - key: REDIS_HOST
+        value: disabled
+      - key: REDIS_PORT
+        value: 6379
+      - key: AUTH_JWT_SECRET
+        generateValue: true
+      - key: AUTH_REFRESH_SECRET
+        generateValue: true
+      - key: AUTH_FORGOT_SECRET
+        generateValue: true
+      - key: AUTH_CONFIRM_EMAIL_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: APP_HOST
+        value: "0.0.0.0"
+      - key: MAIL_HOST
+        value: smtp.gmail.com
+      - key: MAIL_PORT
+        value: 587
+      - key: MAIL_USER
+        value: huyit2003@gmail.com
+      - key: MAIL_PASSWORD
+        value: tgob nbod eitn grpe
+    healthCheckPath: /health 

@@ -1,0 +1,75 @@
+FROM node:18-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Install pnpm and OpenSSL for Prisma
+RUN npm install -g pnpm && \
+    apk add --no-cache openssl postgresql-client
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy Prisma schema first
+COPY prisma ./prisma/
+
+# Copy scripts for debugging
+COPY scripts ./scripts/
+RUN chmod +x scripts/*.sh
+
+# Generate Prisma client BEFORE copying source code
+RUN pnpm prisma generate
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN pnpm run build
+
+# Production stage
+FROM node:18-alpine AS production
+
+# Set working directory
+WORKDIR /app
+
+# Install pnpm and runtime dependencies
+RUN npm install -g pnpm && \
+    apk add --no-cache openssl postgresql-client
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install only production dependencies
+RUN pnpm install --prod --frozen-lockfile
+
+# Copy built application from builder stage
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
+# Copy scripts directory from builder
+COPY --from=builder /app/scripts ./scripts/
+
+# Generate Prisma client in production stage as well
+RUN pnpm prisma generate
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nestjs -u 1001
+
+# Change ownership of the app directory
+RUN chown -R nestjs:nodejs /app
+USER nestjs
+
+# Expose port (Render expects this port)
+EXPOSE 51213
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:51213/health || exit 1
+
+# Start production server with debug
+CMD ["sh", "-c", "echo '=== DOCKER RUNTIME DEBUG ===' && scripts/debug-env.sh && echo '=== STARTING APP ===' && node dist/main"]

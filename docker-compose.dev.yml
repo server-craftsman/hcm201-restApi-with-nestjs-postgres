@@ -1,0 +1,148 @@
+services:
+  # API Server - Development
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: debate_api_dev
+    restart: unless-stopped
+    ports:
+      - "51213:51213"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=${DATABASE_USERNAME}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_URL=${DATABASE_URL_DOCKER}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - AUTH_JWT_TOKEN_EXPIRES_IN=${AUTH_JWT_TOKEN_EXPIRES_IN}
+      - AUTH_REFRESH_SECRET=${AUTH_REFRESH_SECRET}
+      - AUTH_REFRESH_TOKEN_EXPIRES_IN=${AUTH_REFRESH_TOKEN_EXPIRES_IN}
+      - CHOKIDAR_USEPOLLING=true
+      - CHOKIDAR_INTERVAL=1000
+      - APP_PREFIX=api
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:51213,http://localhost:8080
+      - CORS_ENABLED=true
+      - CORS_ORIGIN=*
+      - CORS_CREDENTIALS=true
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT}
+      - MAIL_SECURE=${MAIL_SECURE}
+      - MAIL_USER=${MAIL_USER}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_DEFAULT_EMAIL=${MAIL_DEFAULT_EMAIL}
+      - MAIL_DEFAULT_NAME=${MAIL_DEFAULT_NAME}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+    volumes:
+      - ./src:/app/src:delegated
+      - ./prisma:/app/prisma:delegated
+      - ./package.json:/app/package.json:delegated
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:delegated
+      - ./tsconfig.json:/app/tsconfig.json:delegated
+      - ./nest-cli.json:/app/nest-cli.json:delegated
+      - node_modules:/app/node_modules
+    networks:
+      - debate_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:51213/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: debate_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: debate_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 19102003
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - debate_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d debate_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: debate_redis_dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    networks:
+      - debate_network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Commander (Development tool)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: debate_redis_commander_dev
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    networks:
+      - debate_network
+    depends_on:
+      - redis
+
+  # pgAdmin (Development tool)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: debate_pgadmin_dev
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@debate.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data_dev:/var/lib/pgadmin
+    networks:
+      - debate_network
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data_dev:
+    driver: local
+  redis_data_dev:
+    driver: local
+  pgadmin_data_dev:
+    driver: local
+  node_modules:
+    driver: local
+
+networks:
+  debate_network:
+    driver: bridge

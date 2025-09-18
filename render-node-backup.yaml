@@ -1,0 +1,91 @@
+services:
+  # PostgreSQL Database (Managed Service)
+  - type: pserv
+    name: smartchat-postgres
+    plan: free
+    databaseName: smartchat_db
+
+  # Redis Cache
+  - type: redis
+    name: smartchat-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+
+  # Main API Application
+  - type: web
+    name: smartchat-api
+    env: node
+    plan: free
+    buildCommand: chmod +x scripts/debug-env.sh && scripts/debug-env.sh && pnpm install --frozen-lockfile && pnpm prisma generate && pnpm prisma migrate deploy && pnpm run build
+    startCommand: chmod +x scripts/debug-env.sh && echo "=== RUNTIME DEBUG ===" && scripts/debug-env.sh && echo "=== STARTING APP ===" && pnpm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_HOST
+        fromService:
+          type: pserv
+          name: smartchat-postgres
+          property: host
+      - key: DATABASE_PORT
+        fromService:
+          type: pserv
+          name: smartchat-postgres
+          property: port
+      - key: DATABASE_USERNAME
+        fromService:
+          type: pserv
+          name: smartchat-postgres
+          property: user
+      - key: DATABASE_PASSWORD
+        fromService:
+          type: pserv
+          name: smartchat-postgres
+          property: password
+      - key: DATABASE_NAME
+        fromService:
+          type: pserv
+          name: smartchat-postgres
+          property: database
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: smartchat-postgres
+          property: connectionString
+      - key: REDIS_HOST
+        fromService:
+          type: redis
+          name: smartchat-redis
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: redis
+          name: smartchat-redis
+          property: port
+      - key: REDIS_PASSWORD
+        fromService:
+          type: redis
+          name: smartchat-redis
+          property: password
+      - key: AUTH_JWT_SECRET
+        generateValue: true
+      - key: AUTH_REFRESH_SECRET
+        generateValue: true
+      - key: AUTH_FORGOT_SECRET
+        generateValue: true
+      - key: AUTH_CONFIRM_EMAIL_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: APP_HOST
+        value: "0.0.0.0"
+      - key: MAIL_HOST
+        value: smtp.gmail.com
+      - key: MAIL_PORT
+        value: 587
+      - key: MAIL_USER
+        value: huyit2003@gmail.com
+      - key: MAIL_PASSWORD
+        value: tgob nbod eitn grpe
+    healthCheckPath: /health 
