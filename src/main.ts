@@ -96,7 +96,8 @@ async function bootstrap() {
     }
 
     // Swagger configuration
-    const config = new DocumentBuilder()
+    const isProd = (configService.get('app.environment') || process.env.NODE_ENV) === 'production';
+    const builder = new DocumentBuilder()
       .setTitle('Debate System API')
       .setDescription('Comprehensive API for Debate System - an intelligent chat platform with AI-powered conversations, real-time messaging, and advanced chat management features.')
       .setVersion('1.0.0')
@@ -113,10 +114,17 @@ async function bootstrap() {
           in: 'header',
         },
         'JWT-auth',
-      )
-      .addServer('http://localhost:51213', 'Development Server')
-      .addServer('https://hcm201-restapi-with-nestjs-postgres.onrender.com', 'Production Server')
-      .build();
+      );
+
+    if (isProd) {
+      builder.addServer('https://hcm201-restapi-with-nestjs-postgres.onrender.com', 'Production Server');
+    } else {
+      builder
+        .addServer('http://localhost:51213', 'Development Server')
+        .addServer('https://hcm201-restapi-with-nestjs-postgres.onrender.com', 'Production Server');
+    }
+
+    const config = builder.build();
 
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('swagger-ui', app, document, {
@@ -175,6 +183,7 @@ async function bootstrap() {
           scroll-behavior: smooth;
           background: white !important;
         }
+        ${isProd ? '.swagger-ui .scheme-container, .swagger-ui .servers { display: none !important; }' : ''}
         
         .swagger-ui {
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
@@ -219,7 +228,7 @@ async function bootstrap() {
         }
         
         .swagger-ui .info .title {
-          background: white !important;
+          background: white !important;p
           color: #1a202c !important;
           font-size: 48px !important;
           font-weight: 800 !important;
