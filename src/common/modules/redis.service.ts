@@ -5,7 +5,7 @@ import Redis from 'ioredis';
 @Injectable()
 export class RedisService {
     private readonly logger = new Logger(RedisService.name);
-    private readonly redis: Redis;
+    private readonly redis: Redis | null;
 
     constructor(private readonly configService: ConfigService) {
         const redisHost = process.env.REDIS_HOST || this.configService.get('app.redis.host');
@@ -23,40 +23,41 @@ export class RedisService {
         this.logger.log(`  Redis password: ${redisPassword ? 'Set' : 'Not set'}`);
 
         if (!redisHost || !redisPort) {
-            this.logger.error('Redis configuration incomplete - will cause connection errors');
-            this.logger.error('This may prevent the app from starting if Redis is required');
+            this.logger.warn('Redis disabled: REDIS_HOST/REDIS_PORT not provided. The app will run without Redis.');
+            this.redis = null;
+        } else {
+            this.redis = new Redis({
+                host: redisHost,
+                port: redisPort,
+                password: redisPassword || undefined,
+                db: redisDb,
+                keyPrefix: this.configService.get('app.redis.keyPrefix') || 'smartchat:',
+                maxRetriesPerRequest: 1,
+                enableReadyCheck: false,
+                connectTimeout: 10000,
+                lazyConnect: true,
+            });
+
+            this.redis.on('connect', () => {
+                this.logger.log('Redis connected successfully');
+            });
+
+            this.redis.on('error', (error) => {
+                this.logger.error('Redis connection error:');
+                this.logger.error(`Error: ${error.message}`);
+                this.logger.error('This error can be ignored if Redis is not critical for basic app functionality');
+            });
+
+            this.redis.on('ready', () => {
+                this.logger.log('Redis is ready');
+            });
         }
-
-        this.redis = new Redis({
-            host: redisHost,
-            port: redisPort,
-            password: redisPassword || undefined,
-            db: redisDb,
-            keyPrefix: this.configService.get('app.redis.keyPrefix') || 'smartchat:',
-            maxRetriesPerRequest: 1, // Reduced to fail fast
-            enableReadyCheck: false, // Disable to prevent blocking
-            connectTimeout: 10000, // Reduced timeout
-            lazyConnect: true, // Don't connect immediately
-        });
-
-        this.redis.on('connect', () => {
-            this.logger.log('Redis connected successfully');
-        });
-
-        this.redis.on('error', (error) => {
-            this.logger.error('Redis connection error:');
-            this.logger.error(`Error: ${error.message}`);
-            this.logger.error('This error can be ignored if Redis is not critical for basic app functionality');
-        });
-
-        this.redis.on('ready', () => {
-            this.logger.log('Redis is ready');
-        });
     }
 
     // Basic Redis operations
     async set(key: string, value: string, ttl?: number): Promise<void> {
         try {
+            if (!this.redis) return;
             if (ttl) {
                 await this.redis.setex(key, ttl, value);
             } else {
@@ -70,6 +71,7 @@ export class RedisService {
 
     async get(key: string): Promise<string | null> {
         try {
+            if (!this.redis) return null;
             return await this.redis.get(key);
         } catch (error) {
             this.logger.error(`Error getting key ${key}:`, error);
@@ -79,6 +81,7 @@ export class RedisService {
 
     async del(key: string): Promise<number> {
         try {
+            if (!this.redis) return 0;
             return await this.redis.del(key);
         } catch (error) {
             this.logger.error(`Error deleting key ${key}:`, error);
@@ -88,6 +91,7 @@ export class RedisService {
 
     async exists(key: string): Promise<boolean> {
         try {
+            if (!this.redis) return false;
             const result = await this.redis.exists(key);
             return result === 1;
         } catch (error) {
@@ -98,6 +102,7 @@ export class RedisService {
 
     async expire(key: string, seconds: number): Promise<boolean> {
         try {
+            if (!this.redis) return false;
             const result = await this.redis.expire(key, seconds);
             return result === 1;
         } catch (error) {
@@ -108,6 +113,7 @@ export class RedisService {
 
     async ttl(key: string): Promise<number> {
         try {
+            if (!this.redis) return -2;
             return await this.redis.ttl(key);
         } catch (error) {
             this.logger.error(`Error getting TTL for key ${key}:`, error);
@@ -118,6 +124,7 @@ export class RedisService {
     // Cache operations
     async setCache(key: string, data: any, ttl: number = 300): Promise<void> {
         try {
+            if (!this.redis) return;
             const serializedData = JSON.stringify(data);
             await this.redis.setex(key, ttl, serializedData);
             this.logger.debug(`Cache set: ${key} (TTL: ${ttl}s)`);
@@ -129,6 +136,7 @@ export class RedisService {
 
     async getCache<T>(key: string): Promise<T | null> {
         try {
+            if (!this.redis) return null;
             const data = await this.redis.get(key);
             if (data) {
                 this.logger.debug(`Cache hit: ${key}`);
@@ -144,6 +152,7 @@ export class RedisService {
 
     async deleteCache(key: string): Promise<void> {
         try {
+            if (!this.redis) return;
             await this.redis.del(key);
             this.logger.debug(`Cache deleted: ${key}`);
         } catch (error) {
@@ -154,6 +163,7 @@ export class RedisService {
 
     async clearCache(pattern: string = '*'): Promise<void> {
         try {
+            if (!this.redis) return;
             const keys = await this.redis.keys(pattern);
             if (keys.length > 0) {
                 await this.redis.del(...keys);
@@ -168,6 +178,7 @@ export class RedisService {
     // Rate limiting operations
     async incrementRateLimit(key: string, windowMs: number): Promise<{ count: number; resetTime: number }> {
         try {
+            if (!this.redis) return { count: 0, resetTime: Date.now() + windowMs };
             const now = Date.now();
             const windowStart = Math.floor(now / windowMs) * windowMs;
             const resetTime = windowStart + windowMs;
@@ -193,8 +204,9 @@ export class RedisService {
 
     async getRateLimit(key: string): Promise<{ count: number; resetTime: number }> {
         try {
-            const now = Date.now();
             const windowMs = this.configService.get('app.rateLimit.windowMs') || 900000;
+            if (!this.redis) return { count: 0, resetTime: Date.now() + windowMs } as any;
+            const now = Date.now();
             const windowStart = Math.floor(now / windowMs) * windowMs;
             const resetTime = windowStart + windowMs;
 
@@ -218,6 +230,7 @@ export class RedisService {
     // Session management
     async setSession(sessionId: string, data: any, ttl: number = 3600): Promise<void> {
         try {
+            if (!this.redis) return;
             const serializedData = JSON.stringify(data);
             await this.redis.setex(`session:${sessionId}`, ttl, serializedData);
         } catch (error) {
@@ -228,6 +241,7 @@ export class RedisService {
 
     async getSession<T>(sessionId: string): Promise<T | null> {
         try {
+            if (!this.redis) return null;
             const data = await this.redis.get(`session:${sessionId}`);
             return data ? JSON.parse(data) as T : null;
         } catch (error) {
@@ -238,6 +252,7 @@ export class RedisService {
 
     async deleteSession(sessionId: string): Promise<void> {
         try {
+            if (!this.redis) return;
             await this.redis.del(`session:${sessionId}`);
         } catch (error) {
             this.logger.error(`Error deleting session ${sessionId}:`, error);
@@ -248,6 +263,7 @@ export class RedisService {
     // Pub/Sub operations
     async publish(channel: string, message: any): Promise<number> {
         try {
+            if (!this.redis) return 0;
             const serializedMessage = JSON.stringify(message);
             return await this.redis.publish(channel, serializedMessage);
         } catch (error) {
@@ -258,6 +274,7 @@ export class RedisService {
 
     async subscribe(channel: string, callback: (message: any) => void): Promise<void> {
         try {
+            if (!this.redis) return;
             const subscriber = this.redis.duplicate();
             await subscriber.subscribe(channel);
 
@@ -280,6 +297,7 @@ export class RedisService {
     // Health check
     async ping(): Promise<string> {
         try {
+            if (!this.redis) return 'PONG';
             return await this.redis.ping();
         } catch (error) {
             this.logger.error('Redis ping failed:', error);
@@ -289,6 +307,9 @@ export class RedisService {
 
     // Get Redis instance for advanced operations
     getRedisInstance(): Redis {
+        if (!this.redis) {
+            throw new Error('Redis is disabled');
+        }
         return this.redis;
     }
 } 
