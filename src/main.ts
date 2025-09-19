@@ -80,7 +80,7 @@ async function bootstrap() {
               return callback(null, true);
             }
 
-            // Check if origin is in allowed list
+            // Check if origin is in allowed list 
             if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
               return callback(null, true);
             } else {

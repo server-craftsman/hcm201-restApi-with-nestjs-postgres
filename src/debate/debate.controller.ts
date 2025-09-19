@@ -44,7 +44,6 @@ export class DebateController {
     }
 
     @Get('topics')
-    @ApiBearerAuth('JWT-auth')
     @ApiOperation({
         summary: 'Lấy danh sách chủ đề',
         description: 'Lấy danh sách chủ đề',
@@ -74,7 +73,6 @@ export class DebateController {
     }
 
     @Get('topics/:id')
-    @ApiBearerAuth('JWT-auth')
     @ApiOperation({
         summary: 'Lấy chi tiết chủ đề',
         description: 'Lấy chi tiết chủ đề',
@@ -159,7 +157,6 @@ export class DebateController {
     }
 
     @Get('questions/:id')
-    @ApiBearerAuth('JWT-auth')
     @ApiOperation({
         summary: 'Lấy chi tiết câu hỏi',
         description: 'Lấy chi tiết câu hỏi',
@@ -229,7 +226,6 @@ export class DebateController {
     }
 
     @Get('questions/:questionId/arguments')
-    @ApiBearerAuth('JWT-auth')
     @ApiOperation({
         summary: 'Lấy danh sách luận điểm theo câu hỏi',
         description: 'Lấy danh sách luận điểm theo câu hỏi',
@@ -259,7 +255,6 @@ export class DebateController {
     }
 
     @Get('arguments/:id')
-    @ApiBearerAuth('JWT-auth')
     @ApiOperation({
         summary: 'Lấy chi tiết luận điểm',
         description: 'Lấy chi tiết luận điểm',
