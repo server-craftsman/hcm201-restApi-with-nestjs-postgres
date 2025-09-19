@@ -31,4 +31,4 @@ RUN chmod +x scripts/debug-env.sh
 EXPOSE 51213
 
 # Start: run migrations (or push if no migrations) then app (with debugging output)
-CMD ["sh", "-lc", "echo '=== DOCKER STARTUP DEBUG ===' && scripts/debug-env.sh && echo '=== PRISMA MIGRATE DEPLOY ===' && (npx prisma migrate deploy || (echo 'No migrations found, running db push' && npx prisma db push)) && echo '=== STARTING APP ===' && node dist/main"] 
+CMD ["sh", "-lc", "echo '=== DOCKER STARTUP DEBUG ===' && scripts/debug-env.sh && echo '=== PRISMA MIGRATION CHECK ===' && if [ -d prisma/migrations ] && [ \"$(ls -A prisma/migrations | wc -l)\" -gt 0 ]; then echo 'Migrations found → running migrate deploy'; npx prisma migrate deploy; else echo 'No migrations found → running db push'; npx prisma db push; fi && echo '=== STARTING APP ===' && node dist/main"] 
