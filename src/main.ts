@@ -46,11 +46,13 @@ async function bootstrap() {
     app.use(compression());
 
     // Global validation pipe
+    const appDebug = configService.get('app.debug') === 'true';
     app.useGlobalPipes(new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      disableErrorMessages: configService.get('app.environment') === 'production',
+      // Allow enabling detailed errors in production via APP_DEBUG=true
+      disableErrorMessages: !appDebug && configService.get('app.environment') === 'production',
     }));
 
     // Global API response interceptor
