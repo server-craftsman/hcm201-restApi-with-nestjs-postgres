@@ -27,7 +27,7 @@ services:
       - APP_PREFIX=api
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
       - CORS_ENABLED=true
-      - CORS_ORIGIN=${CORS_ORIGIN}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - CORS_CREDENTIALS=true
       - MAIL_HOST=${MAIL_HOST}
       - MAIL_PORT=${MAIL_PORT}

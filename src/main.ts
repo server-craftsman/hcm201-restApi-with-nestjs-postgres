@@ -65,32 +65,33 @@ async function bootstrap() {
       // In development, allow all origins for easier testing
       if (environment === 'development') {
         app.enableCors({
-          origin: true, // Allow all origins in development
+          origin: true,
           credentials: true,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
           allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
           exposedHeaders: ['X-Total-Count', 'X-Page-Count'],
+          optionsSuccessStatus: 204,
         });
       } else {
-        // In production, use strict origin checking
+        // In production: if '*' configured, allow all; otherwise, strict allowlist
+        const allowAll = allowedOrigins.includes('*');
         app.enableCors({
-          origin: (origin, callback) => {
-            // Allow requests with no origin (like mobile apps or curl requests)
-            if (!origin) {
-              return callback(null, true);
-            }
-
-            // Check if origin is in allowed list 
-            if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-              return callback(null, true);
-            } else {
+          origin: allowAll
+            ? true
+            : (origin, callback) => {
+              if (!origin) {
+                return callback(null, true);
+              }
+              if (allowedOrigins.includes(origin)) {
+                return callback(null, true);
+              }
               return callback(new Error(`CORS: Origin ${origin} not allowed`), false);
-            }
-          },
+            },
           credentials: true,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
           allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
           exposedHeaders: ['X-Total-Count', 'X-Page-Count'],
+          optionsSuccessStatus: 204,
         });
       }
     }

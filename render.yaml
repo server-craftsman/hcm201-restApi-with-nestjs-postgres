@@ -30,6 +30,10 @@ services:
         generateValue: true
       - key: ALLOWED_ORIGINS
         value: "*"
+      - key: CORS_ENABLED
+        value: true
+      - key: CORS_ORIGIN
+        value: "*"
       - key: APP_HOST
         value: "0.0.0.0"
       - key: MAIL_HOST
