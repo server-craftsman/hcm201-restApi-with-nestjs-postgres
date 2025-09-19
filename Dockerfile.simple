@@ -30,5 +30,5 @@ RUN chmod +x scripts/debug-env.sh
 # Expose port
 EXPOSE 51213
 
-# Start: run migrations then app (with debugging output)
-CMD ["sh", "-lc", "echo '=== DOCKER STARTUP DEBUG ===' && scripts/debug-env.sh && echo '=== PRISMA MIGRATE DEPLOY ===' && npx prisma migrate deploy || true && echo '=== STARTING APP ===' && node dist/main"] 
+# Start: run migrations (or push if no migrations) then app (with debugging output)
+CMD ["sh", "-lc", "echo '=== DOCKER STARTUP DEBUG ===' && scripts/debug-env.sh && echo '=== PRISMA MIGRATE DEPLOY ===' && (npx prisma migrate deploy || (echo 'No migrations found, running db push' && npx prisma db push)) && echo '=== STARTING APP ===' && node dist/main"] 
