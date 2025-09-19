@@ -14,7 +14,7 @@ datasource db {
 }
 
 model User {
-  id          String     @id @default(cuid())
+  id          String     @id @default(uuid()) @db.Uuid
   email       String     @unique
   username    String     @unique
   password    String?    // Nullable for Google OAuth users
@@ -50,10 +50,10 @@ model User {
 }
 
 model Topic {
-  id          String     @id @default(cuid())
+  id          String     @id @default(uuid()) @db.Uuid
   title       String
   description String?    @db.Text
-  ownerId     String
+  ownerId     String     @db.Uuid
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -65,9 +65,9 @@ model Topic {
 }
 
 model Question {
-  id        String   @id @default(cuid())
+  id        String   @id @default(uuid()) @db.Uuid
   content   String   @db.Text
-  topicId   String
+  topicId   String   @db.Uuid
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -79,10 +79,10 @@ model Question {
 }
 
 model Argument {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid()) @db.Uuid
   body        String   @db.Text
-  authorId    String
-  questionId  String
+  authorId    String   @db.Uuid
+  questionId  String   @db.Uuid
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

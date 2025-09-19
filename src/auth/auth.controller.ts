@@ -181,21 +181,21 @@ export class AuthController {
         }
     }
 
-    @Post('login')
-    @ApiOperation({
-        summary: 'Đăng nhập người dùng',
-        description: 'Đăng nhập bằng username và password, trả về JWT token',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Đăng nhập thành công',
-        type: ApiResponseDto,
-    })
-    @ApiResponse({
-        status: HttpStatus.UNAUTHORIZED,
-        description: 'Thông tin đăng nhập không chính xác',
-        type: ErrorResponseDto,
-    })
+    // @Post('login')
+    // @ApiOperation({
+    //     summary: 'Đăng nhập người dùng',
+    //     description: 'Đăng nhập bằng username và password, trả về JWT token',
+    // })
+    // @ApiResponse({
+    //     status: HttpStatus.OK,
+    //     description: 'Đăng nhập thành công',
+    //     type: ApiResponseDto,
+    // })
+    // @ApiResponse({
+    //     status: HttpStatus.UNAUTHORIZED,
+    //     description: 'Thông tin đăng nhập không chính xác',
+    //     type: ErrorResponseDto,
+    // })
     // @HttpCode(HttpStatus.OK)
     // async login(@Body() loginDto: LoginDto) {
     //     try {
