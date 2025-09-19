@@ -239,6 +239,11 @@ export class AuthService {
             throw new UnauthorizedException('Account is deactivated');
         }
 
+        // Require email verification before allowing login (non-OAuth accounts)
+        if (!user.isVerified) {
+            throw new UnauthorizedException('Email is not verified');
+        }
+
         // Update user status to online
         await this.userService.setUserOnline(user.id);
 
