@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { DebateService } from './debate.service';
+import { VotingService } from './voting.service';
+import { DebateSessionService } from './debate-session.service';
+import { EvaluationService } from './evaluation.service';
 import { DebateController } from './debate.controller';
 import { DebateGateway } from './debate.gateway';
 import { TopicRepository } from './infrastructure/topic.repository';
@@ -12,6 +15,9 @@ import { PrismaModule } from '../prisma/prisma.module';
     controllers: [DebateController],
     providers: [
         DebateService,
+        VotingService,
+        DebateSessionService,
+        EvaluationService,
         DebateGateway,
         {
             provide: 'TopicRepositoryInterface',
@@ -26,6 +32,6 @@ import { PrismaModule } from '../prisma/prisma.module';
             useClass: ArgumentRepository,
         },
     ],
-    exports: [DebateService],
+    exports: [DebateService, VotingService, DebateSessionService, EvaluationService],
 })
 export class DebateModule { }

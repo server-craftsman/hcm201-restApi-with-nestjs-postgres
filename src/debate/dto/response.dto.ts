@@ -30,6 +30,27 @@ export class ArgumentResponseDto {
     questionId: string;
 
     @ApiProperty({
+        description: 'Số lượt upvote',
+        example: 15,
+        type: Number,
+    })
+    upvotes: number;
+
+    @ApiProperty({
+        description: 'Số lượt downvote',
+        example: 3,
+        type: Number,
+    })
+    downvotes: number;
+
+    @ApiProperty({
+        description: 'Điểm số (upvotes - downvotes)',
+        example: 12,
+        type: Number,
+    })
+    score: number;
+
+    @ApiProperty({
         description: 'Thời gian tạo',
         example: '2024-01-15T10:30:00.000Z',
         type: Date,
@@ -42,6 +63,18 @@ export class ArgumentResponseDto {
         type: Date,
     })
     updatedAt: Date;
+
+    @ApiProperty({
+        description: 'Thông tin tác giả',
+        type: 'object',
+        required: false,
+    })
+    author?: {
+        id: string;
+        username: string;
+        fullName?: string;
+        avatar?: string;
+    };
 }
 
 export class QuestionResponseDto {
