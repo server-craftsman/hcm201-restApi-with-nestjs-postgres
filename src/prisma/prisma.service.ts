@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { execSync } from 'child_process';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -39,6 +40,25 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             this.logger.log('Attempting database connection...');
             await this.$connect();
             this.logger.log('✅ Database connected successfully');
+
+            // Optional: Ensure schema on boot when shell access is unavailable
+            if (process.env.RUN_DB_PUSH_ON_BOOT === 'true') {
+                try {
+                    this.logger.log('Ensuring Prisma schema exists (RUN_DB_PUSH_ON_BOOT=true)...');
+                    // Try migrate deploy first; if it fails, fallback to db push
+                    try {
+                        execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+                    } catch {
+                        execSync('npx prisma db push', { stdio: 'inherit' });
+                    }
+                    try {
+                        execSync('npx prisma generate', { stdio: 'inherit' });
+                    } catch { }
+                    this.logger.log('Prisma schema ensured.');
+                } catch (err) {
+                    this.logger.warn('Prisma schema sync on boot failed (continuing): ' + (err as Error).message);
+                }
+            }
         } catch (error) {
             this.logger.error('❌ Failed to connect to database:');
             this.logger.error(`Error: ${error.message}`);
