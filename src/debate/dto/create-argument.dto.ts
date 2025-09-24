@@ -1,6 +1,5 @@
-import { IsEnum, IsString, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { ArgumentType } from '../../database/schemas/argument.schema';
 
 export class CreateArgumentDto {
     @ApiProperty({ description: 'Tiêu đề luận điểm', example: 'Tư tưởng độc lập dân tộc' })
@@ -24,8 +23,4 @@ export class CreateArgumentDto {
     @IsString()
     @IsNotEmpty()
     threadId: string;
-
-    @ApiProperty({ description: 'Loại luận điểm', enum: ArgumentType, example: ArgumentType.SUPPORT })
-    @IsEnum(ArgumentType)
-    argumentType: ArgumentType;
 }

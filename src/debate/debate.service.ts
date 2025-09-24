@@ -35,7 +35,7 @@ export interface CreateArgumentDto {
     content: string;
     authorId: string;
     threadId: string;
-    argumentType: ArgumentType;
+    argumentType?: ArgumentType;
 }
 
 export interface ModerateArgumentDto {
@@ -219,13 +219,27 @@ export class DebateService {
         return thread;
     }
 
-    async getAllThreads(status?: ThreadStatus): Promise<DebateThreadDocument[]> {
+    async getAllThreads(
+        status?: ThreadStatus,
+        page: number = 1,
+        limit: number = 20,
+    ): Promise<{ items: DebateThreadDocument[]; totalItems: number; page: number; limit: number }> {
         const filter = status ? { status } : {};
-        return await this.debateThreadModel.find(filter)
-            .populate('createdBy', 'username email firstName lastName avatar')
-            .populate('moderators', 'username email firstName lastName avatar')
-            .sort({ createdAt: -1 })
-            .exec();
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const [items, totalItems] = await Promise.all([
+            this.debateThreadModel.find(filter)
+                .populate('createdBy', 'username email firstName lastName avatar')
+                .populate('moderators', 'username email firstName lastName avatar')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.debateThreadModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
     }
 
     async updateThreadStatus(id: string, status: ThreadStatus, userId: string): Promise<DebateThreadDocument> {
@@ -326,11 +340,14 @@ export class DebateService {
     }
 
     async getUserVote(userId: string, threadId: string): Promise<VoteDocument | null> {
-        return await this.voteModel.findOne({ userId, threadId }).exec();
+        const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : (userId as any);
+        const threadObjectId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
+        return await this.voteModel.findOne({ userId: userObjectId, threadId: threadObjectId }).exec();
     }
 
     async getThreadVotes(threadId: string): Promise<{ support: number; oppose: number }> {
-        const votes = await this.voteModel.find({ threadId }).exec();
+        const normalizedThreadId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
+        const votes = await this.voteModel.find({ threadId: normalizedThreadId }).exec();
 
         const support = votes.filter(vote => vote.voteType === VoteType.SUPPORT).length;
         const oppose = votes.filter(vote => vote.voteType === VoteType.OPPOSE).length;
@@ -340,9 +357,9 @@ export class DebateService {
 
     // Argument System
     async createArgument(data: CreateArgumentDto): Promise<ArgumentDocument> {
-        // Validate required fields
-        if (!data.title || !data.content || !data.authorId || !data.threadId || !data.argumentType) {
-            throw new BadRequestException('All fields are required');
+        // Validate required fields (argumentType is derived from user's vote)
+        if (!data.title || !data.content || !data.authorId || !data.threadId) {
+            throw new BadRequestException('title, content, authorId and threadId are required');
         }
 
         // Check if user exists
@@ -361,22 +378,28 @@ export class DebateService {
             throw new BadRequestException('Arguments are not allowed for this thread');
         }
 
-        // Determine author's side by their vote on this thread
-        const existingVote = await this.voteModel.findOne({
-            userId: data.authorId,
-            threadId: data.threadId,
-        }).lean();
-
-        const computedArgumentType = existingVote
-            ? (existingVote.voteType === VoteType.SUPPORT ? ArgumentType.SUPPORT : ArgumentType.OPPOSE)
-            : data.argumentType; // fallback to provided type if no vote
-
-        // Create argument with normalized ObjectId fields
+        // Normalize ids early for reliable matching
         const authorObjectId = Types.ObjectId.isValid(data.authorId) ? new Types.ObjectId(data.authorId) : undefined;
         const threadObjectId = Types.ObjectId.isValid(data.threadId) ? new Types.ObjectId(data.threadId) : undefined;
         if (!authorObjectId || !threadObjectId) {
             throw new BadRequestException('Invalid authorId or threadId');
         }
+
+        // Determine author's side by their vote on this thread (match by ObjectId)
+        const existingVote = await this.voteModel.findOne({
+            userId: authorObjectId,
+            threadId: threadObjectId,
+        }).lean();
+
+        if (!existingVote) {
+            throw new BadRequestException('You must vote on this thread before posting an argument');
+        }
+
+        const computedArgumentType = existingVote.voteType === VoteType.SUPPORT
+            ? ArgumentType.SUPPORT
+            : ArgumentType.OPPOSE;
+
+        // Create argument with normalized ObjectId fields (already validated above)
 
         const argument = new this.argumentModel({
             title: data.title,
@@ -406,17 +429,33 @@ export class DebateService {
         return savedArgument;
     }
 
-    async getArguments(threadId: string, status?: ArgumentStatus): Promise<ArgumentDocument[]> {
-        const filter: any = { threadId };
+    async getArguments(
+        threadId: string,
+        status?: ArgumentStatus,
+        page: number = 1,
+        limit: number = 20,
+    ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
+        const normalizedThreadId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
+        const filter: any = { threadId: normalizedThreadId };
         if (status) {
             filter.status = status;
         }
 
-        return await this.argumentModel.find(filter)
-            .populate('authorId', 'username email firstName lastName avatar')
-            .populate('moderatedBy', 'username email firstName lastName avatar')
-            .sort({ createdAt: -1 })
-            .exec();
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const [items, totalItems] = await Promise.all([
+            this.argumentModel.find(filter)
+                .populate('authorId', 'username email firstName lastName avatar')
+                .populate('moderatedBy', 'username email firstName lastName avatar')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.argumentModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
     }
 
     async getArgument(id: string): Promise<ArgumentDocument> {

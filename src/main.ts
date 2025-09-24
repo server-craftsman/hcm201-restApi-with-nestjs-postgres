@@ -117,7 +117,8 @@ async function bootstrap() {
           in: 'header',
         },
         'JWT-auth',
-      );
+      )
+      .addSecurityRequirements('JWT-auth');
 
     if (isProd) {
       builder.addServer('https://hcm201-restapi-with-nestjs-postgres.onrender.com', 'Production Server');

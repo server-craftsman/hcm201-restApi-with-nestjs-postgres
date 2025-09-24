@@ -116,8 +116,60 @@ export class UserService {
         return await user.save();
     }
 
-    async findAll(): Promise<UserDocument[]> {
-        return await this.userModel.find().exec();
+    async findAll(query?: {
+        page?: number;
+        limit?: number;
+        email?: string;
+        username?: string;
+        status?: UserStatus;
+        role?: UserRole;
+        createdAtFrom?: Date;
+        createdAtTo?: Date;
+        lastSeenFrom?: Date;
+        lastSeenTo?: Date;
+        onlineOnly?: boolean;
+        hasAvatar?: boolean;
+        sortBy?: string;
+        sortOrder?: 'asc' | 'desc';
+    }): Promise<{ items: UserDocument[]; totalItems: number; page: number; limit: number }> {
+        const page = Math.max(1, Number(query?.page ?? 1));
+        const limit = Math.max(1, Math.min(Number(query?.limit ?? 10), 100));
+        const skip = (page - 1) * limit;
+
+        const filter: any = {};
+        if (query?.email) filter.email = new RegExp(query.email, 'i');
+        if (query?.username) filter.username = new RegExp(query.username, 'i');
+        if (query?.status) filter.status = query.status;
+        if (query?.role) filter.role = query.role;
+        if (query?.onlineOnly) filter.status = UserStatus.ONLINE;
+        if (query?.hasAvatar) filter.avatar = { $exists: true, $ne: null };
+
+        if (query?.createdAtFrom || query?.createdAtTo) {
+            filter.createdAt = {};
+            if (query.createdAtFrom) filter.createdAt.$gte = query.createdAtFrom;
+            if (query.createdAtTo) filter.createdAt.$lte = query.createdAtTo;
+        }
+
+        if (query?.lastSeenFrom || query?.lastSeenTo) {
+            filter.lastSeen = {};
+            if (query.lastSeenFrom) filter.lastSeen.$gte = query.lastSeenFrom;
+            if (query.lastSeenTo) filter.lastSeen.$lte = query.lastSeenTo;
+        }
+
+        const sortBy = query?.sortBy ?? 'createdAt';
+        const sortOrder = (query?.sortOrder ?? 'desc') === 'asc' ? 1 : -1;
+
+        const [items, totalItems] = await Promise.all([
+            this.userModel
+                .find(filter)
+                .sort({ [sortBy]: sortOrder })
+                .skip(skip)
+                .limit(limit)
+                .exec(),
+            this.userModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page, limit };
     }
 
     async findById(id: string): Promise<UserDocument | null> {

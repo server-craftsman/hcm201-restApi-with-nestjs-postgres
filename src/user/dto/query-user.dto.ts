@@ -1,7 +1,7 @@
 import { IsOptional, IsString, IsEnum, IsNumber, Min, Max, IsIn } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { UserStatus } from '../domain/interfaces/user.interface';
+import { UserStatus, UserRole } from '../../database/schemas/user.schema';
 
 export class QueryUserDto {
     @ApiPropertyOptional({
@@ -56,12 +56,13 @@ export class QueryUserDto {
     status?: UserStatus;
 
     @ApiPropertyOptional({
-        description: 'Tìm kiếm theo avatar URL',
-        example: 'https://example.com/avatar.jpg',
+        description: 'Lọc theo vai trò',
+        enum: UserRole,
+        example: UserRole.USER,
     })
     @IsOptional()
-    @IsString()
-    avatar?: string;
+    @IsEnum(UserRole)
+    role?: UserRole;
 
     @ApiPropertyOptional({
         description: 'Sắp xếp theo field',

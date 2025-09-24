@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DebateService } from './debate.service';
 import { DebateController } from './debate.controller';
+import { DebateGateway } from './debate.gateway';
 import { DebateThread, DebateThreadSchema } from '../database/schemas/debate-thread.schema';
 import { Vote, VoteSchema } from '../database/schemas/vote.schema';
 import { Argument, ArgumentSchema } from '../database/schemas/argument.schema';
@@ -19,7 +20,7 @@ import { User, UserSchema } from '../database/schemas/user.schema';
         ]),
     ],
     controllers: [DebateController],
-    providers: [DebateService],
+    providers: [DebateService, DebateGateway],
     exports: [DebateService],
 })
 export class DebateModule { }

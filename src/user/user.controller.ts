@@ -124,18 +124,19 @@ export class UserController {
     })
     @ApiQuery({ name: 'page', required: false, description: 'Số trang', example: 1 })
     @ApiQuery({ name: 'limit', required: false, description: 'Số items trên mỗi trang', example: 10 })
-    @ApiQuery({ name: 'search', required: false, description: 'Từ khóa tìm kiếm', example: 'john' })
-    @ApiQuery({ name: 'status', required: false, description: 'Trạng thái người dùng', example: 'ONLINE' })
-    @ApiQuery({ name: 'role', required: false, description: 'Vai trò người dùng', example: 'USER' })
+    @ApiQuery({ name: 'email', required: false, description: 'Email' })
+    @ApiQuery({ name: 'username', required: false, description: 'Username' })
+    @ApiQuery({ name: 'status', required: false, description: 'Trạng thái người dùng' })
+    @ApiQuery({ name: 'role', required: false, description: 'Vai trò người dùng' })
     @ApiQuery({ name: 'sortBy', required: false, description: 'Sắp xếp theo field', example: 'createdAt' })
-    @ApiQuery({ name: 'sortOrder', required: false, description: 'Thứ tự sắp xếp', example: 'DESC' })
+    @ApiQuery({ name: 'sortOrder', required: false, description: 'Thứ tự sắp xếp', example: 'desc' })
     @ApiResponse({
         status: 200,
         description: 'Danh sách người dùng với pagination',
         type: ApiResponseDto,
     })
     async findAll(@Query() query: QueryUserDto): Promise<ApiResponseDto> {
-        const result = await this.userService.findAll();
+        const result = await this.userService.findAll(query);
         return {
             statusCode: 200,
             message: 'Users retrieved successfully',
@@ -158,7 +159,7 @@ export class UserController {
         type: ApiResponseDto,
     })
     async findAllWithoutPagination(): Promise<ApiResponseDto> {
-        const users = await this.userService.findAll();
+        const users = (await this.userService.findAll({ limit: 1000, page: 1 })).items;
         return {
             statusCode: 200,
             message: 'All users retrieved successfully',
