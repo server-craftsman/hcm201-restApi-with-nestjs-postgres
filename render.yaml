@@ -5,12 +5,12 @@ services:
     env: node
     plan: free
     buildCommand: pnpm install --frozen-lockfile && pnpm build
-    startCommand: pnpm run start:prod:minimal
+    startCommand: pnpm run start
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=128 --optimize-for-size"
+        value: "--max-old-space-size=256"
       - key: APP_PREFIX
         value: api
       - key: PORT
