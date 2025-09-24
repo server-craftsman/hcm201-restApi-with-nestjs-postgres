@@ -1,16 +1,63 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { UserRepository } from './infrastructure/repositories/user.repository';
-import { User } from './domain/entities/user.entity';
-import { ICreateUser, IUpdateUser, IUserStatus, UserStatus, IUser, UserRole } from './domain/interfaces/user.interface';
-import { UserMapper } from './infrastructure/mappers/user.mapper';
-import { IPaginatedResponse } from '../utils/types/pagination-options';
-import { QueryUserDto } from './dto/query-user.dto';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User, UserDocument, UserRole, UserStatus } from '../database/schemas/user.schema';
+import * as bcrypt from 'bcryptjs';
+
+export interface CreateUserDto {
+    email: string;
+    username: string;
+    password?: string;
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    avatar?: string;
+    phone?: number;
+    dateOfBirth?: Date;
+    gender?: string;
+    bio?: string;
+    location?: string;
+    website?: string;
+    role?: UserRole;
+    googleId?: string;
+    facebookId?: string;
+    provider?: string;
+    isVerified?: boolean;
+    isActive?: boolean;
+}
+
+export interface UpdateUserDto {
+    email?: string;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    avatar?: string;
+    phone?: number;
+    dateOfBirth?: Date;
+    gender?: string;
+    bio?: string;
+    location?: string;
+    website?: string;
+    role?: UserRole;
+    status?: UserStatus;
+    isVerified?: boolean;
+    isActive?: boolean;
+    lastSeen?: Date;
+    hash?: string;
+    hashExpires?: Date;
+    googleId?: string;
+    facebookId?: string;
+    provider?: string;
+}
 
 @Injectable()
 export class UserService {
-    constructor(private readonly userRepository: UserRepository) { }
+    constructor(
+        @InjectModel(User.name) private userModel: Model<UserDocument>,
+    ) { }
 
-    async createUser(data: ICreateUser): Promise<Omit<IUser, 'password'>> {
+    async create(data: CreateUserDto): Promise<UserDocument> {
         // Validate required fields
         if (!data.email || !data.username) {
             throw new BadRequestException('Email and username are required');
@@ -22,13 +69,13 @@ export class UserService {
         }
 
         // Check if user already exists by email
-        const existingUserByEmail = await this.userRepository.findByEmail(data.email);
+        const existingUserByEmail = await this.userModel.findOne({ email: data.email });
         if (existingUserByEmail) {
             throw new ConflictException('User with this email already exists');
         }
 
         // Check if user already exists by username
-        const existingUserByUsername = await this.userRepository.findByUsername(data.username);
+        const existingUserByUsername = await this.userModel.findOne({ username: data.username });
         if (existingUserByUsername) {
             throw new ConflictException('Username already taken');
         }
@@ -50,92 +97,83 @@ export class UserService {
             throw new BadRequestException('Password must be at least 6 characters long');
         }
 
+        // Hash password if provided
+        let hashedPassword: string | undefined;
+        if (data.password) {
+            hashedPassword = await bcrypt.hash(data.password, 12);
+        }
+
         // Create new user
-        const user = await this.userRepository.create(data);
-        return UserMapper.toResponse(user);
-    }
-
-    async findAllUsers(): Promise<Omit<IUser, 'password'>[]> {
-        const users = await this.userRepository.findAll();
-        return UserMapper.toResponseList(users);
-    }
-
-    async findUsersWithPagination(query: QueryUserDto): Promise<IPaginatedResponse<Omit<IUser, 'password'>>> {
-        const result = await this.userRepository.findWithPagination(query);
-
-        return {
-            items: UserMapper.toResponseList(result.items),
-            pagination: result.pagination,
+        const userData = {
+            ...data,
+            password: hashedPassword,
+            role: data.role || UserRole.USER,
+            status: UserStatus.OFFLINE,
+            provider: data.provider || 'local',
         };
+
+        const user = new this.userModel(userData);
+        return await user.save();
     }
 
-    async findUserById(id: string): Promise<Omit<IUser, 'password'>> {
+    async findAll(): Promise<UserDocument[]> {
+        return await this.userModel.find().exec();
+    }
+
+    async findById(id: string): Promise<UserDocument | null> {
         if (!id) {
             throw new BadRequestException('User ID is required');
         }
-
-        const user = await this.userRepository.findById(id);
-        if (!user) {
-            throw new NotFoundException('User not found');
-        }
-        return UserMapper.toResponse(user);
+        return await this.userModel.findById(id).exec();
     }
 
-    // Returns domain User entity (not DTO) for internal use cases
-    async getUserEntityById(id: string): Promise<User> {
-        if (!id) {
-            throw new BadRequestException('User ID is required');
-        }
-
-        const user = await this.userRepository.findById(id);
-        if (!user) {
-            throw new NotFoundException('User not found');
-        }
-        return user;
-    }
-
-    async findUserByEmail(email: string): Promise<User | null> {
+    async findByEmail(email: string): Promise<UserDocument | null> {
         if (!email) {
             throw new BadRequestException('Email is required');
         }
-        return await this.userRepository.findByEmail(email);
+        return await this.userModel.findOne({ email }).exec();
     }
 
-    async findUserByUsername(username: string): Promise<User | null> {
+    async findByUsername(username: string): Promise<UserDocument | null> {
         if (!username) {
             throw new BadRequestException('Username is required');
         }
-        return await this.userRepository.findByUsername(username);
+        return await this.userModel.findOne({ username }).exec();
     }
 
-    async findUserByEmailOrUsername(emailOrUsername: string): Promise<User | null> {
+    async findByEmailOrUsername(emailOrUsername: string): Promise<UserDocument | null> {
         if (!emailOrUsername) {
             throw new BadRequestException('Email or username is required');
         }
-        return await this.userRepository.findByEmailOrUsername(emailOrUsername);
+        return await this.userModel.findOne({
+            $or: [
+                { email: emailOrUsername },
+                { username: emailOrUsername }
+            ]
+        }).exec();
     }
 
-    async findUserByGoogleId(googleId: string): Promise<User | null> {
+    async findByGoogleId(googleId: string): Promise<UserDocument | null> {
         if (!googleId) {
             throw new BadRequestException('Google ID is required');
         }
-        return await this.userRepository.findByGoogleId(googleId);
+        return await this.userModel.findOne({ googleId }).exec();
     }
 
-    async findUserByVerificationHash(hash: string): Promise<User | null> {
-        if (!hash) {
-            throw new BadRequestException('Verification hash is required');
+    async findByFacebookId(facebookId: string): Promise<UserDocument | null> {
+        if (!facebookId) {
+            throw new BadRequestException('Facebook ID is required');
         }
-        return await this.userRepository.findByVerificationHash(hash);
+        return await this.userModel.findOne({ facebookId }).exec();
     }
 
-    async updateUser(id: string, data: IUpdateUser): Promise<Omit<IUser, 'password'>> {
+    async update(id: string, data: UpdateUserDto): Promise<UserDocument> {
         if (!id) {
             throw new BadRequestException('User ID is required');
         }
 
         // Check if user exists
-        const existingUser = await this.userRepository.findById(id);
+        const existingUser = await this.userModel.findById(id);
         if (!existingUser) {
             throw new NotFoundException('User not found');
         }
@@ -158,7 +196,7 @@ export class UserService {
 
         // Check if email is being updated and if it's already taken
         if (data.email && data.email !== existingUser.email) {
-            const userWithEmail = await this.userRepository.findByEmail(data.email);
+            const userWithEmail = await this.userModel.findOne({ email: data.email });
             if (userWithEmail) {
                 throw new ConflictException('Email already taken');
             }
@@ -166,32 +204,94 @@ export class UserService {
 
         // Check if username is being updated and if it's already taken
         if (data.username && data.username !== existingUser.username) {
-            const userWithUsername = await this.userRepository.findByUsername(data.username);
+            const userWithUsername = await this.userModel.findOne({ username: data.username });
             if (userWithUsername) {
                 throw new ConflictException('Username already taken');
             }
         }
 
         // Update user
-        const updatedUser = await this.userRepository.update(id, data);
-        return UserMapper.toResponse(updatedUser);
+        const updatedUser = await this.userModel.findByIdAndUpdate(id, data, { new: true }).exec();
+        if (!updatedUser) {
+            throw new NotFoundException('User not found after update');
+        }
+        return updatedUser;
     }
 
-    async updateUserStatus(id: string, status: IUserStatus): Promise<Omit<IUser, 'password'>> {
+    async delete(id: string): Promise<void> {
         if (!id) {
             throw new BadRequestException('User ID is required');
         }
 
-        const existingUser = await this.userRepository.findById(id);
+        const existingUser = await this.userModel.findById(id);
         if (!existingUser) {
             throw new NotFoundException('User not found');
         }
 
-        const updatedUser = await this.userRepository.updateStatus(id, status);
-        return UserMapper.toResponse(updatedUser);
+        await this.userModel.findByIdAndDelete(id).exec();
     }
 
-    async updateUserRole(id: string, role: UserRole): Promise<Omit<IUser, 'password'>> {
+    async validateUser(emailOrUsername: string, password: string): Promise<UserDocument | null> {
+        if (!emailOrUsername || !password) {
+            return null;
+        }
+
+        const user = await this.findByEmailOrUsername(emailOrUsername);
+        if (!user) {
+            return null;
+        }
+
+        // Check if user is active
+        if (!user.isActive) {
+            return null;
+        }
+
+        // Check if user has a password (OAuth users might not have one)
+        if (!user.password) {
+            return null;
+        }
+
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            return null;
+        }
+
+        return user;
+    }
+
+    async updateLastSeen(id: string): Promise<void> {
+        if (!id) {
+            throw new BadRequestException('User ID is required');
+        }
+
+        await this.userModel.findByIdAndUpdate(id, {
+            lastSeen: new Date()
+        }).exec();
+    }
+
+    async updateStatus(id: string, status: UserStatus): Promise<UserDocument> {
+        if (!id) {
+            throw new BadRequestException('User ID is required');
+        }
+
+        const existingUser = await this.userModel.findById(id);
+        if (!existingUser) {
+            throw new NotFoundException('User not found');
+        }
+
+        const updatedUser = await this.userModel.findByIdAndUpdate(id, {
+            status,
+            lastSeen: new Date()
+        }, { new: true }).exec();
+
+        if (!updatedUser) {
+            throw new NotFoundException('User not found after update');
+        }
+
+        return updatedUser;
+    }
+
+    async updateRole(id: string, role: UserRole): Promise<UserDocument> {
         if (!id) {
             throw new BadRequestException('User ID is required');
         }
@@ -200,49 +300,44 @@ export class UserService {
             throw new BadRequestException('Role is required');
         }
 
-        const existingUser = await this.userRepository.findById(id);
+        const existingUser = await this.userModel.findById(id);
         if (!existingUser) {
             throw new NotFoundException('User not found');
         }
 
-        const updatedUser = await this.userRepository.updateRole(id, role);
-        return UserMapper.toResponse(updatedUser);
-    }
-
-    async deleteUser(id: string): Promise<void> {
-        if (!id) {
-            throw new BadRequestException('User ID is required');
+        const updatedUser = await this.userModel.findByIdAndUpdate(id, { role }, { new: true }).exec();
+        if (!updatedUser) {
+            throw new NotFoundException('User not found after update');
         }
-
-        const existingUser = await this.userRepository.findById(id);
-        if (!existingUser) {
-            throw new NotFoundException('User not found');
-        }
-
-        await this.userRepository.delete(id);
+        return updatedUser;
     }
 
-    async findOnlineUsers(): Promise<Omit<IUser, 'password'>[]> {
-        const users = await this.userRepository.findOnlineUsers();
-        return UserMapper.toResponseList(users);
+    async findOnlineUsers(): Promise<UserDocument[]> {
+        return await this.userModel.find({ status: UserStatus.ONLINE }).exec();
     }
 
-    async findUsersByStatus(status: UserStatus): Promise<Omit<IUser, 'password'>[]> {
+    async findUsersByStatus(status: UserStatus): Promise<UserDocument[]> {
         if (!status) {
             throw new BadRequestException('Status is required');
         }
-
-        const users = await this.userRepository.findUsersByStatus(status);
-        return UserMapper.toResponseList(users);
+        return await this.userModel.find({ status }).exec();
     }
 
-    async searchUsers(searchTerm: string): Promise<Omit<IUser, 'password'>[]> {
+    async searchUsers(searchTerm: string): Promise<UserDocument[]> {
         if (!searchTerm || searchTerm.trim().length === 0) {
             throw new BadRequestException('Search term is required');
         }
 
-        const users = await this.userRepository.searchUsers(searchTerm.trim());
-        return UserMapper.toResponseList(users);
+        const regex = new RegExp(searchTerm.trim(), 'i');
+        return await this.userModel.find({
+            $or: [
+                { username: regex },
+                { email: regex },
+                { firstName: regex },
+                { lastName: regex },
+                { fullName: regex }
+            ]
+        }).exec();
     }
 
     async getUsersStats(): Promise<{
@@ -254,92 +349,39 @@ export class UserService {
         withAvatar: number;
         withoutAvatar: number;
     }> {
-        return await this.userRepository.getUsersStats();
+        const [
+            total,
+            online,
+            offline,
+            away,
+            busy,
+            withAvatar,
+            withoutAvatar
+        ] = await Promise.all([
+            this.userModel.countDocuments(),
+            this.userModel.countDocuments({ status: UserStatus.ONLINE }),
+            this.userModel.countDocuments({ status: UserStatus.OFFLINE }),
+            this.userModel.countDocuments({ status: UserStatus.AWAY }),
+            this.userModel.countDocuments({ status: UserStatus.BUSY }),
+            this.userModel.countDocuments({ avatar: { $exists: true, $ne: null } }),
+            this.userModel.countDocuments({ $or: [{ avatar: { $exists: false } }, { avatar: null }] })
+        ]);
+
+        return {
+            total,
+            online,
+            offline,
+            away,
+            busy,
+            withAvatar,
+            withoutAvatar
+        };
     }
 
-    async updateLastSeen(id: string): Promise<void> {
-        if (!id) {
-            throw new BadRequestException('User ID is required');
+    async findByVerificationHash(hash: string): Promise<UserDocument | null> {
+        if (!hash) {
+            throw new BadRequestException('Verification hash is required');
         }
-
-        const existingUser = await this.userRepository.findById(id);
-        if (!existingUser) {
-            throw new NotFoundException('User not found');
-        }
-
-        await this.userRepository.updateLastSeen(id);
+        return await this.userModel.findOne({ hash }).exec();
     }
-
-    async validateUser(emailOrUsername: string, password: string): Promise<User | null> {
-        if (!emailOrUsername || !password) {
-            return null;
-        }
-
-        const user = await this.userRepository.findByEmailOrUsername(emailOrUsername);
-        if (!user) {
-            return null;
-        }
-
-        // Check if user is active
-        if (!user.isActive) {
-            return null;
-        }
-
-        const bcrypt = require('bcryptjs');
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-
-        if (!isPasswordValid) {
-            return null;
-        }
-
-        return user;
-    }
-
-    async setUserOnline(id: string): Promise<void> {
-        if (!id) {
-            throw new BadRequestException('User ID is required');
-        }
-
-        await this.updateUserStatus(id, {
-            id,
-            status: UserStatus.ONLINE,
-            lastSeen: new Date(),
-        });
-    }
-
-    async setUserOffline(id: string): Promise<void> {
-        if (!id) {
-            throw new BadRequestException('User ID is required');
-        }
-
-        await this.updateUserStatus(id, {
-            id,
-            status: UserStatus.OFFLINE,
-            lastSeen: new Date(),
-        });
-    }
-
-    async setUserAway(id: string): Promise<void> {
-        if (!id) {
-            throw new BadRequestException('User ID is required');
-        }
-
-        await this.updateUserStatus(id, {
-            id,
-            status: UserStatus.AWAY,
-            lastSeen: new Date(),
-        });
-    }
-
-    async setUserBusy(id: string): Promise<void> {
-        if (!id) {
-            throw new BadRequestException('User ID is required');
-        }
-
-        await this.updateUserStatus(id, {
-            id,
-            status: UserStatus.BUSY,
-            lastSeen: new Date(),
-        });
-    }
-} 
+}

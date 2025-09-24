@@ -11,6 +11,7 @@ export abstract class UserRepositoryAbstract implements IUserRepository {
     abstract findAll(): Promise<User[]>;
     abstract findByVerificationHash(hash: string): Promise<User | null>;
     abstract update(id: string, data: IUpdateUser): Promise<User>;
+    abstract findByFacebookId(facebookId: string): Promise<User | null>;
     abstract updateStatus(id: string, status: IUserStatus): Promise<User>;
     abstract updateRole(id: string, role: UserRole): Promise<User>;
     abstract delete(id: string): Promise<void>;

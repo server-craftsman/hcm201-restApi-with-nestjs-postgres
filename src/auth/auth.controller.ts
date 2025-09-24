@@ -10,6 +10,7 @@ import { CreateUserDto } from '../user/dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { GoogleAuthDto } from './dto/google-auth.dto';
+import { FacebookAuthDto } from './dto/facebook-auth.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ICreateUser } from '../user/domain/interfaces/user.interface';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -181,6 +182,24 @@ export class AuthController {
         }
     }
 
+    @Post('facebook')
+    @ApiOperation({
+        summary: 'Đăng nhập bằng Facebook OAuth',
+        description: 'Đăng nhập hoặc đăng ký bằng Facebook access token',
+    })
+    @ApiResponse({ status: HttpStatus.OK, description: 'Đăng nhập Facebook thành công', type: ApiResponseDto })
+    @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Facebook token không hợp lệ', type: ErrorResponseDto })
+    @HttpCode(HttpStatus.OK)
+    async facebookAuth(@Body() dto: FacebookAuthDto) {
+        const result = await this.authService.facebookAuth(dto);
+        return {
+            statusCode: 200,
+            message: result.message,
+            data: result,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
     // @Post('login')
     // @ApiOperation({
     //     summary: 'Đăng nhập người dùng',
@@ -315,7 +334,7 @@ export class AuthController {
         }
 
         try {
-            const user = await this.userService.findUserById(req.user.id);
+            const user = await this.userService.findById(req.user.id);
             console.log('Found user:', user); // Debug log
 
             return {

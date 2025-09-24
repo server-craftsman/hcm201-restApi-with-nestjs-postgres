@@ -1,37 +1,25 @@
 import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
 import { DebateService } from './debate.service';
-import { VotingService } from './voting.service';
-import { DebateSessionService } from './debate-session.service';
-import { EvaluationService } from './evaluation.service';
 import { DebateController } from './debate.controller';
-import { DebateGateway } from './debate.gateway';
-import { TopicRepository } from './infrastructure/topic.repository';
-import { QuestionRepository } from './infrastructure/question.repository';
-import { ArgumentRepository } from './infrastructure/argument.repository';
-import { PrismaModule } from '../prisma/prisma.module';
+import { DebateThread, DebateThreadSchema } from '../database/schemas/debate-thread.schema';
+import { Vote, VoteSchema } from '../database/schemas/vote.schema';
+import { Argument, ArgumentSchema } from '../database/schemas/argument.schema';
+import { ModerationLog, ModerationLogSchema } from '../database/schemas/moderation-log.schema';
+import { User, UserSchema } from '../database/schemas/user.schema';
 
 @Module({
-    imports: [PrismaModule],
-    controllers: [DebateController],
-    providers: [
-        DebateService,
-        VotingService,
-        DebateSessionService,
-        EvaluationService,
-        DebateGateway,
-        {
-            provide: 'TopicRepositoryInterface',
-            useClass: TopicRepository,
-        },
-        {
-            provide: 'QuestionRepositoryInterface',
-            useClass: QuestionRepository,
-        },
-        {
-            provide: 'ArgumentRepositoryInterface',
-            useClass: ArgumentRepository,
-        },
+    imports: [
+        MongooseModule.forFeature([
+            { name: DebateThread.name, schema: DebateThreadSchema },
+            { name: Vote.name, schema: VoteSchema },
+            { name: Argument.name, schema: ArgumentSchema },
+            { name: ModerationLog.name, schema: ModerationLogSchema },
+            { name: User.name, schema: UserSchema },
+        ]),
     ],
-    exports: [DebateService, VotingService, DebateSessionService, EvaluationService],
+    controllers: [DebateController],
+    providers: [DebateService],
+    exports: [DebateService],
 })
 export class DebateModule { }

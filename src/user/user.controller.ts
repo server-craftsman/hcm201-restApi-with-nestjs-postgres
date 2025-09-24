@@ -105,7 +105,7 @@ export class UserController {
             avatar: createUserDto.avatar,
             role: createUserDto.role,
         };
-        const result = await this.userService.createUser(userData);
+        const result = await this.userService.create(userData);
         return {
             statusCode: 201,
             message: 'User created successfully',
@@ -135,7 +135,7 @@ export class UserController {
         type: ApiResponseDto,
     })
     async findAll(@Query() query: QueryUserDto): Promise<ApiResponseDto> {
-        const result = await this.userService.findUsersWithPagination(query);
+        const result = await this.userService.findAll();
         return {
             statusCode: 200,
             message: 'Users retrieved successfully',
@@ -158,7 +158,7 @@ export class UserController {
         type: ApiResponseDto,
     })
     async findAllWithoutPagination(): Promise<ApiResponseDto> {
-        const users = await this.userService.findAllUsers();
+        const users = await this.userService.findAll();
         return {
             statusCode: 200,
             message: 'All users retrieved successfully',
@@ -266,7 +266,7 @@ export class UserController {
         type: ErrorResponseDto,
     })
     async findOne(@Param('id') id: string): Promise<ApiResponseDto> {
-        const user = await this.userService.findUserById(id);
+        const user = await this.userService.findById(id);
         return {
             statusCode: 200,
             message: 'User retrieved successfully',
@@ -317,7 +317,7 @@ export class UserController {
             website: updateUserDto.website,
             role: updateUserDto.role,
         };
-        const result = await this.userService.updateUser(id, userData);
+        const result = await this.userService.update(id, userData);
         return {
             statusCode: 200,
             message: 'User updated successfully',
@@ -350,7 +350,7 @@ export class UserController {
         type: ErrorResponseDto,
     })
     async remove(@Param('id') id: string): Promise<ApiResponseDto> {
-        await this.userService.deleteUser(id);
+        await this.userService.delete(id);
         return {
             statusCode: 200,
             message: 'User deleted successfully',

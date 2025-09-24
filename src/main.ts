@@ -800,7 +800,7 @@ async function bootstrap() {
     console.log(`\x1b[36m║\x1b[0m \x1b[33m🎯 API v1:\x1b[0m         http://${host}:${port}/api/v1                   \x1b[36m║\x1b[0m`);
     console.log(`\x1b[36m║\x1b[0m \x1b[36m⚡ Environment:\x1b[0m     ${(configService.get('app.environment') || 'development').toUpperCase().padEnd(43)}\x1b[36m║\x1b[0m`);
     console.log(`\x1b[36m║\x1b[0m \x1b[31m🛡️  Rate Limit:\x1b[0m     ${configService.get('app.rateLimit.max')} req/${Math.floor(configService.get('app.rateLimit.windowMs') / 1000 / 60)}min                              \x1b[36m║\x1b[0m`);
-    console.log(`\x1b[36m║\x1b[0m \x1b[37m💾 Redis Cache:\x1b[0m     ${configService.get('app.redis.host')}:${configService.get('app.redis.port')}                            \x1b[36m║\x1b[0m`);
+    console.log(`\x1b[36m║\x1b[0m \x1b[37m💾 Redis Cache:\x1b[0m     Disabled                                              \x1b[36m║\x1b[0m`);
     console.log(`\x1b[36m║\x1b[0m \x1b[90m🕒 Started at:\x1b[0m      ${new Date().toLocaleString().padEnd(41)}  \x1b[36m║\x1b[0m`);
     console.log('\x1b[36m╚══════════════════════════════════════════════════════════════════════╝\x1b[0m');
     console.log('\x1b[32m✨ Ready to serve intelligent conversations! ✨\x1b[0m\n');

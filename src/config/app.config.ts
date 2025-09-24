@@ -4,9 +4,7 @@ export default registerAs('app', () => {
   // Debug environment variables
   console.log('=== CONFIG DEBUG ===');
   console.log('NODE_ENV:', process.env.NODE_ENV);
-  console.log('DATABASE_URL:', process.env.DATABASE_URL ? 'Set' : 'Not set');
-  console.log('DATABASE_HOST:', process.env.DATABASE_HOST);
-  console.log('DATABASE_PORT:', process.env.DATABASE_PORT);
+  console.log('MONGODB_URI:', process.env.MONGODB_URI ? 'Set' : 'Not set');
   console.log('REDIS_HOST:', process.env.REDIS_HOST);
   console.log('REDIS_PORT:', process.env.REDIS_PORT);
   console.log('PORT:', process.env.PORT);
@@ -28,24 +26,13 @@ export default registerAs('app', () => {
     frontendDomain: process.env.APP_FRONTEND_DOMAIN || process.env.FRONTEND_DOMAIN,
     allowedOrigins: allowedOrigins,
 
-    // Database Configuration
-    database: {
-      type: process.env.DATABASE_TYPE,
-      host: process.env.DATABASE_HOST,
-      port: parseInt(process.env.DATABASE_PORT || '', 10),
-      username: process.env.DATABASE_USERNAME,
-      password: process.env.DATABASE_PASSWORD,
-      name: process.env.DATABASE_NAME,
-      synchronize: process.env.DATABASE_SYNCHRONIZE === 'true',
-      maxConnections: parseInt(process.env.DATABASE_MAX_CONNECTIONS || '', 10) || '',
-      ssl: {
-        enabled: process.env.DATABASE_SSL_ENABLED === 'true',
-        rejectUnauthorized: process.env.DATABASE_REJECT_UNAUTHORIZED === 'true',
-        ca: process.env.DATABASE_CA,
-        key: process.env.DATABASE_KEY,
-        cert: process.env.DATABASE_CERT,
+    // MongoDB Configuration
+    mongodb: {
+      uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/debate-system',
+      options: {
+        retryWrites: true,
+        w: 'majority',
       },
-      url: process.env.DATABASE_URL,
     },
 
     // Redis Configuration for Caching and Rate Limiting

@@ -26,6 +26,7 @@ export interface IUser {
     updatedAt: Date;
     // OAuth fields
     googleId?: string;
+    facebookId?: string;
     provider?: string;
 }
 
@@ -48,6 +49,7 @@ export interface ICreateUser {
     isActive?: boolean;
     // OAuth fields
     googleId?: string;
+    facebookId?: string;
     provider?: string;
 }
 
@@ -72,6 +74,7 @@ export interface IUpdateUser {
     lastSeen?: Date;
     // OAuth fields
     googleId?: string;
+    facebookId?: string;
     provider?: string;
 }
 
@@ -102,6 +105,7 @@ export interface IUserRepository {
     findByUsername(username: string): Promise<User | null>;
     findByEmailOrUsername(emailOrUsername: string): Promise<User | null>;
     findByGoogleId(googleId: string): Promise<User | null>;
+    findByFacebookId(facebookId: string): Promise<User | null>;
     findByVerificationHash(hash: string): Promise<User | null>;
     findAll(): Promise<User[]>;
     update(id: string, data: IUpdateUser): Promise<User>;

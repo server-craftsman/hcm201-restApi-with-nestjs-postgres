@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, HttpException, HttpStatus, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../modules/redis.service';
 
@@ -6,7 +6,7 @@ import { RedisService } from '../modules/redis.service';
 export class RateLimitGuard implements CanActivate {
     constructor(
         private readonly configService: ConfigService,
-        private readonly redisService: RedisService,
+        @Optional() private readonly redisService?: RedisService,
     ) { }
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -23,6 +23,11 @@ export class RateLimitGuard implements CanActivate {
 
         // Create rate limit key
         const rateLimitKey = `rate_limit:${clientIp}`;
+
+        // If RedisService is not available/disabled, allow the request (fail open)
+        if (!this.redisService) {
+            return true;
+        }
 
         try {
             // Check current rate limit

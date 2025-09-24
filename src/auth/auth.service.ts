@@ -5,14 +5,16 @@ import { MailService } from '../mail/mail.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { GoogleAuthDto } from './dto/google-auth.dto';
-import { User } from '../user/domain/entities/user.entity';
-import { UserRole } from '../user/domain/interfaces/user.interface';
+import { FacebookAuthDto } from './dto/facebook-auth.dto';
+import { User, UserDocument, UserStatus } from '../database/schemas/user.schema';
+import { UserRole } from '../database/schemas/user.schema';
 import { randomBytes } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
 export class AuthService {
     private readonly googleClient: OAuth2Client;
+    // Facebook uses token introspection via Graph API; no SDK needed server-side
 
     constructor(
         private readonly userService: UserService,
@@ -22,12 +24,12 @@ export class AuthService {
         this.googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
     }
 
-    async validateUser(username: string, password: string): Promise<User | null> {
+    async validateUser(username: string, password: string): Promise<UserDocument | null> {
         if (!username || !password) {
             return null;
         }
 
-        const user = await this.userService.findUserByUsername(username);
+        const user = await this.userService.findByUsername(username);
         if (!user) {
             return null;
         }
@@ -54,13 +56,13 @@ export class AuthService {
 
     async register(userData: any) {
         try {
-            const user = await this.userService.createUser(userData);
+            const user = await this.userService.create(userData);
 
             // Generate verification hash
             const verificationHash = randomBytes(32).toString('hex');
 
             // Save verification hash to database
-            await this.userService.updateUser(user.id, {
+            await this.userService.update(user.id, {
                 hash: verificationHash,
                 hashExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
             });
@@ -103,8 +105,6 @@ export class AuthService {
                     isVerified: user.isVerified,
                     isActive: user.isActive,
                     lastSeen: user.lastSeen,
-                    createdAt: user.createdAt,
-                    updatedAt: user.updatedAt,
                 },
             };
         } catch (error) {
@@ -151,19 +151,19 @@ export class AuthService {
             }
 
             // Check if user exists by Google ID
-            let user = await this.userService.findUserByGoogleId(googleId);
+            let user = await this.userService.findByGoogleId(googleId);
 
             if (user) {
                 // User exists, update last seen
-                await this.userService.updateUser(user.id, {
+                await this.userService.update(user.id, {
                     lastSeen: new Date(),
                 });
             } else {
                 // Check if user exists by email
-                const existingUser = await this.userService.findUserByEmail(email);
+                const existingUser = await this.userService.findByEmail(email);
                 if (existingUser) {
                     // Link Google account to existing user
-                    await this.userService.updateUser(existingUser.id, {
+                    await this.userService.update(existingUser.id, {
                         googleId,
                         provider: 'google',
                         ...(picture ? { avatar: picture } : {}),
@@ -171,7 +171,7 @@ export class AuthService {
                         lastSeen: new Date(),
                     });
                     // Reload as domain entity
-                    user = await this.userService.getUserEntityById(existingUser.id);
+                    user = await this.userService.findById(existingUser.id);
                 } else {
                     // Create new user
                     const username = email.split('@')[0] + '_' + googleId.substring(0, 8);
@@ -190,8 +190,8 @@ export class AuthService {
                         isActive: true,
                     } as const;
 
-                    const created = await this.userService.createUser(userData);
-                    user = await this.userService.getUserEntityById(created.id);
+                    const created = await this.userService.create(userData);
+                    user = await this.userService.findById(created.id);
                 }
             }
 
@@ -224,6 +224,96 @@ export class AuthService {
         }
     }
 
+    async facebookAuth(dto: FacebookAuthDto) {
+        const accessToken = dto.accessToken;
+        if (!accessToken) {
+            throw new BadRequestException('Facebook access token is required');
+        }
+
+        // Fetch user info from Facebook Graph API
+        const fields = 'id,name,first_name,last_name,email,picture.type(large)';
+        const url = `https://graph.facebook.com/me?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(accessToken)}`;
+        const res = await fetch(url).then(r => r.json());
+
+        if (res.error) {
+            throw new UnauthorizedException('Invalid Facebook token');
+        }
+
+        const facebookId: string = res.id;
+        const email: string | undefined = res.email;
+        const fullName: string | undefined = res.name;
+        const firstName: string | undefined = res.first_name;
+        const lastName: string | undefined = res.last_name;
+        const picture: string | undefined = res.picture?.data?.url;
+
+        if (!facebookId) {
+            throw new UnauthorizedException('Invalid Facebook token (no id)');
+        }
+
+        // Try find by facebookId
+        let user = await this.userService.findByFacebookId?.(facebookId);
+
+        if (user) {
+            await this.userService.update(user.id, { lastSeen: new Date() });
+        } else {
+            // If email exists, link account; else create minimal account
+            if (email) {
+                const existing = await this.userService.findByEmail(email);
+                if (existing) {
+                    await this.userService.update(existing.id, {
+                        facebookId,
+                        provider: 'facebook',
+                        ...(picture ? { avatar: picture } : {}),
+                        role: UserRole.USER,
+                        lastSeen: new Date(),
+                        isVerified: true,
+                    });
+                    user = await this.userService.findById(existing.id);
+                }
+            }
+
+            if (!user) {
+                const usernameBase = email ? email.split('@')[0] : `fb_${facebookId.substring(0, 8)}`;
+                const username = `${usernameBase}_${facebookId.substring(0, 6)}`;
+                const created = await this.userService.create({
+                    email: email ?? `${username}@facebook.local`,
+                    username,
+                    password: undefined,
+                    ...(firstName ? { firstName } : {}),
+                    ...(lastName ? { lastName } : {}),
+                    ...(fullName ? { fullName } : {}),
+                    ...(picture ? { avatar: picture } : {}),
+                    facebookId,
+                    provider: 'facebook',
+                    isVerified: true,
+                    isActive: true,
+                });
+                user = await this.userService.findById(created.id);
+            }
+        }
+
+        if (!user) {
+            throw new UnauthorizedException('Facebook authentication failed');
+        }
+
+        const tokens = await this.generateTokens(user);
+        return {
+            message: 'Facebook authentication successful',
+            user: {
+                id: user.id,
+                email: user.email,
+                username: user.username,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                fullName: user.fullName,
+                avatar: user.avatar,
+                role: user.role,
+                isVerified: user.isVerified,
+            },
+            ...tokens,
+        };
+    }
+
     async login(loginDto: LoginDto) {
         if (!loginDto.username || !loginDto.password) {
             throw new BadRequestException('Username and password are required');
@@ -245,7 +335,7 @@ export class AuthService {
         }
 
         // Update user status to online
-        await this.userService.setUserOnline(user.id);
+        await this.userService.updateStatus(user.id, UserStatus.ONLINE);
 
         const payload = {
             sub: user.id,
@@ -279,8 +369,6 @@ export class AuthService {
                 isVerified: user.isVerified,
                 isActive: user.isActive,
                 lastSeen: user.lastSeen,
-                createdAt: user.createdAt,
-                updatedAt: user.updatedAt,
             },
         };
     }
@@ -290,7 +378,7 @@ export class AuthService {
             throw new BadRequestException('User ID is required');
         }
 
-        await this.userService.setUserOffline(userId);
+        await this.userService.updateStatus(userId, UserStatus.OFFLINE);
         return { message: 'Logged out successfully' };
     }
 
@@ -299,7 +387,7 @@ export class AuthService {
             throw new BadRequestException('User ID is required');
         }
 
-        const user = await this.userService.findUserById(userId);
+        const user = await this.userService.findById(userId);
         if (!user) {
             throw new UnauthorizedException('User not found');
         }
@@ -338,7 +426,7 @@ export class AuthService {
             return false;
         }
 
-        const user = await this.userService.findUserById(userId);
+        const user = await this.userService.findById(userId);
         if (!user) {
             return false;
         }
@@ -360,7 +448,7 @@ export class AuthService {
 
         try {
             // Find user by verification hash
-            const user = await this.userService.findUserByVerificationHash(hash);
+            const user = await this.userService.findByVerificationHash(hash);
 
             if (!user) {
                 throw new BadRequestException('Invalid verification hash');
@@ -372,7 +460,7 @@ export class AuthService {
             }
 
             // Update user verification status
-            await this.userService.updateUser(user.id, {
+            await this.userService.update(user.id, {
                 isVerified: true,
                 hash: undefined,
                 hashExpires: undefined,
@@ -397,7 +485,7 @@ export class AuthService {
     }
 
     async resendVerificationEmail(email: string) {
-        const user = await this.userService.findUserByEmail(email);
+        const user = await this.userService.findByEmail(email);
         if (!user) {
             throw new BadRequestException('User not found');
         }
@@ -425,7 +513,7 @@ export class AuthService {
     }
 
     // Helper: generate access/refresh tokens for a domain User entity
-    private async generateTokens(user: User): Promise<{ access_token: string; refresh_token: string }> {
+    private async generateTokens(user: UserDocument): Promise<{ access_token: string; refresh_token: string }> {
         const payload = {
             sub: user.id,
             email: user.email,
