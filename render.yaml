@@ -5,12 +5,12 @@ services:
     env: node
     plan: free
     buildCommand: pnpm install --frozen-lockfile && pnpm build
-    startCommand: pnpm run start:prod:memory
+    startCommand: pnpm run start:prod:minimal
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=512"
+        value: "--max-old-space-size=128 --optimize-for-size"
       - key: APP_PREFIX
         value: api
       - key: PORT
@@ -89,4 +89,8 @@ services:
         value: Debate System
       - key: GOOGLE_CLIENT_ID
         sync: false
+      - key: ENABLE_MAIL
+        value: false
+      - key: DISABLE_SWAGGER
+        value: true
     healthCheckPath: /health
