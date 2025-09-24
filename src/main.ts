@@ -787,7 +787,7 @@ async function bootstrap() {
       `,
     });
 
-    const port = configService.get('app.port') || 51213;
+    const port = process.env.PORT || configService.get('app.port') || 51213;
     const host = configService.get('app.host') || '0.0.0.0';
 
     await app.listen(port, host);
