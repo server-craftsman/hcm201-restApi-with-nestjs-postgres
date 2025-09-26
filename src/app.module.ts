@@ -7,19 +7,20 @@ import { AppService } from './app.service';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { HealthModule } from './health/health.module';
-import appConfig from './config/app.config';
+import config from './config/app.config';
 // Core modules only
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { DatabaseModule } from './database/database.module';
 import { DebateModule } from './debate/debate.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
     imports: [
         // Configuration
         ConfigModule.forRoot({
             isGlobal: true,
-            load: [appConfig],
+            load: [config],
             envFilePath: ['.env.local', '.env'],
             cache: true, // Cache config to save memory
         }),
@@ -38,6 +39,7 @@ import { DebateModule } from './debate/debate.module';
         UserModule,
         HealthModule,
         DebateModule,
+        ChatModule,
     ],
     controllers: [AppController],
     providers: [

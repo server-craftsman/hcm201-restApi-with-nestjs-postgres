@@ -83,6 +83,9 @@ importers:
       mongoose:
         specifier: ^8.0.3
         version: 8.18.1
+      node-fetch:
+        specifier: ^3.3.2
+        version: 3.3.2
       nodemailer:
         specifier: ^6.9.7
         version: 6.10.1

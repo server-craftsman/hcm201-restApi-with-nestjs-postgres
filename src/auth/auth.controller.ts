@@ -154,7 +154,7 @@ export class AuthController {
     @Post('google')
     @ApiOperation({
         summary: 'Đăng nhập bằng Google OAuth',
-        description: 'Đăng nhập hoặc đăng ký bằng Google OAuth token',
+        description: 'Đăng nhập hoặc đăng ký bằng Google ID token (từ client-side OAuth) hoặc access token',
     })
     @ApiResponse({
         status: HttpStatus.OK,
@@ -185,7 +185,7 @@ export class AuthController {
     @Post('facebook')
     @ApiOperation({
         summary: 'Đăng nhập bằng Facebook OAuth',
-        description: 'Đăng nhập hoặc đăng ký bằng Facebook access token',
+        description: 'Đăng nhập hoặc đăng ký bằng Facebook access token từ client-side authentication. Yêu cầu Facebook App được cấu hình với domain của bạn.',
     })
     @ApiResponse({ status: HttpStatus.OK, description: 'Đăng nhập Facebook thành công', type: ApiResponseDto })
     @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Facebook token không hợp lệ', type: ErrorResponseDto })

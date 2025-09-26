@@ -1,6 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
-export default registerAs('app', () => {
+const appConfig = registerAs('app', () => {
   // Debug environment variables
   console.log('=== CONFIG DEBUG ===');
   console.log('NODE_ENV:', process.env.NODE_ENV);
@@ -8,6 +8,14 @@ export default registerAs('app', () => {
   console.log('REDIS_HOST:', process.env.REDIS_HOST);
   console.log('REDIS_PORT:', process.env.REDIS_PORT);
   console.log('PORT:', process.env.PORT);
+  // AI config debug (redacted key)
+  if (process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
+    console.log('AI_API_KEY: Set');
+  } else {
+    console.log('AI_API_KEY: Not set');
+  }
+  if (process.env.AI_API_BASE) console.log('AI_API_BASE:', process.env.AI_API_BASE);
+  if (process.env.AI_MODEL) console.log('AI_MODEL:', process.env.AI_MODEL);
 
   // Debug CORS configuration
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(origin => origin.trim()) || ['http://localhost:3000'];
@@ -133,5 +141,16 @@ export default registerAs('app', () => {
       pingTimeout: parseInt(process.env.WS_PING_TIMEOUT || '', 10) || '',
       pingInterval: parseInt(process.env.WS_PING_INTERVAL || '', 10) || '',
     },
+
+    // AI Provider Configuration (used by chat module)
+    ai: {
+      apiKey: process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY,
+      apiBase: process.env.AI_API_BASE || 'https://api.openai.com/v1',
+      model: process.env.AI_MODEL || 'gpt-4o-mini',
+      debug: (process.env.AI_DEBUG || '').toLowerCase() === 'true',
+      provider: process.env.AI_PROVIDER || 'openai',
+    },
   };
 });
+
+export default appConfig;

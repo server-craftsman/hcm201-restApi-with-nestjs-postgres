@@ -153,15 +153,57 @@ export class DebateService {
         return thread;
     }
 
-    async getModerationQueueForModerator(moderatorId: string, isAdmin: boolean = false): Promise<ArgumentDocument[]> {
-        // Admins see all pending arguments
+    // Overloads for moderation queue (backwards compatible)
+    async getModerationQueueForModerator(moderatorId: string, isAdmin?: boolean): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }>;
+    async getModerationQueueForModerator(
+        moderatorId: string,
+        isAdmin: boolean = false,
+        query?: {
+            status?: ArgumentStatus;
+            argumentType?: ArgumentType;
+            threadId?: string;
+            search?: string;
+            page?: number;
+            limit?: number;
+            sort?: string;
+        },
+    ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
+        const page = Number(query?.page ?? 1);
+        const limit = Math.max(1, Math.min(Number(query?.limit ?? 20), 100));
+        const skip = Math.max(0, (page - 1) * limit);
+        const sort: any = (() => {
+            if (!query?.sort) return { createdAt: 1 };
+            const [field, dir] = String(query.sort).split(':');
+            const direction = Number(dir) === -1 ? -1 : 1;
+            return { [field]: direction };
+        })();
+
+        const baseFilter: any = {};
+        // Status defaults to PENDING if not provided
+        baseFilter.status = query?.status ?? ArgumentStatus.PENDING;
+        if (query?.argumentType) baseFilter.argumentType = query.argumentType;
+        if (query?.threadId) baseFilter.threadId = Types.ObjectId.isValid(query.threadId) ? new Types.ObjectId(query.threadId) : query.threadId;
+        if (query?.search) {
+            baseFilter.$or = [
+                { title: { $regex: query.search, $options: 'i' } },
+                { content: { $regex: query.search, $options: 'i' } },
+            ];
+        }
+
+        // Admins see according to filter only
         if (isAdmin) {
-            return await this.argumentModel
-                .find({ status: ArgumentStatus.PENDING })
-                .populate('authorId', 'username email firstName lastName avatar')
-                .populate('moderatedBy', 'username email firstName lastName avatar')
-                .sort({ createdAt: 1 })
-                .exec();
+            const [items, totalItems] = await Promise.all([
+                this.argumentModel
+                    .find(baseFilter)
+                    .populate('authorId', 'username email firstName lastName avatar')
+                    .populate('moderatedBy', 'username email firstName lastName avatar')
+                    .sort(sort)
+                    .skip(skip)
+                    .limit(limit)
+                    .exec(),
+                this.argumentModel.countDocuments(baseFilter),
+            ]);
+            return { items, totalItems, page, limit };
         }
         // Normalize moderator id to ObjectId for reliable matching
         const modObjectId = Types.ObjectId.isValid(moderatorId)
@@ -193,17 +235,28 @@ export class DebateService {
             .lean();
 
         if (!threads.length) {
-            return [];
+            return { items: [], totalItems: 0, page, limit };
         }
 
         const threadIds = threads.map((t: any) => t._id);
 
-        return await this.argumentModel
-            .find({ threadId: { $in: threadIds }, status: ArgumentStatus.PENDING })
-            .populate('authorId', 'username email firstName lastName avatar')
-            .populate('moderatedBy', 'username email firstName lastName avatar')
-            .sort({ createdAt: 1 })
-            .exec();
+        const moderatorFilter = {
+            ...baseFilter,
+            threadId: { $in: threadIds },
+        } as any;
+
+        const [items, totalItems] = await Promise.all([
+            this.argumentModel
+                .find(moderatorFilter)
+                .populate('authorId', 'username email firstName lastName avatar')
+                .populate('moderatedBy', 'username email firstName lastName avatar')
+                .sort(sort)
+                .skip(skip)
+                .limit(limit)
+                .exec(),
+            this.argumentModel.countDocuments(moderatorFilter),
+        ]);
+        return { items, totalItems, page, limit };
     }
 
     async getThread(id: string): Promise<DebateThreadDocument> {
@@ -219,20 +272,50 @@ export class DebateService {
         return thread;
     }
 
+    // Overloads for threads list (backwards compatible)
+    async getAllThreads(status?: ThreadStatus, page?: number, limit?: number): Promise<{ items: DebateThreadDocument[]; totalItems: number; page: number; limit: number }>;
     async getAllThreads(
         status?: ThreadStatus,
         page: number = 1,
         limit: number = 20,
+        options?: { search?: string; createdBy?: string; moderatorId?: string; sort?: string },
     ): Promise<{ items: DebateThreadDocument[]; totalItems: number; page: number; limit: number }> {
-        const filter = status ? { status } : {};
+        const filter: any = {};
+        if (status) filter.status = status;
+        if (options?.createdBy) {
+            filter.createdBy = Types.ObjectId.isValid(options.createdBy) ? new Types.ObjectId(options.createdBy) : options.createdBy;
+        }
+        if (options?.moderatorId) {
+            const id = Types.ObjectId.isValid(options.moderatorId) ? new Types.ObjectId(options.moderatorId) : options.moderatorId;
+            filter.$or = [
+                { modForSideA: id },
+                { modForSideB: id },
+                { moderators: id },
+            ];
+        }
+        if (options?.search) {
+            const text = options.search;
+            filter.$or = (filter.$or || []).concat([
+                { title: { $regex: text, $options: 'i' } },
+                { description: { $regex: text, $options: 'i' } },
+            ]);
+        }
+
         const skip = Math.max(0, (Number(page) - 1) * Number(limit));
         const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const sort: any = (() => {
+            if (!options?.sort) return { createdAt: -1 };
+            const [field, dir] = String(options.sort).split(':');
+            const direction = Number(dir) === 1 || String(dir) === 'asc' ? 1 : -1;
+            return { [field]: direction };
+        })();
 
         const [items, totalItems] = await Promise.all([
             this.debateThreadModel.find(filter)
                 .populate('createdBy', 'username email firstName lastName avatar')
                 .populate('moderators', 'username email firstName lastName avatar')
-                .sort({ createdAt: -1 })
+                .sort(sort)
                 .skip(skip)
                 .limit(take)
                 .exec(),

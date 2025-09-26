@@ -119,10 +119,11 @@ export class AuthService {
 
     async googleAuth(googleAuthDto: GoogleAuthDto) {
         try {
-            // Validate inputs
-            const idToken = googleAuthDto.idToken ?? googleAuthDto.accessToken;
-            if (!idToken) {
-                throw new BadRequestException('Google token is required');
+            // Validate inputs - prioritize idToken for client-side OAuth
+            const { idToken, accessToken } = googleAuthDto;
+
+            if (!idToken && !accessToken) {
+                throw new BadRequestException('Either Google ID token or access token is required');
             }
 
             const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -130,13 +131,36 @@ export class AuthService {
                 throw new BadRequestException('GOOGLE_CLIENT_ID is not configured');
             }
 
-            // Verify Google token
-            const ticket = await this.googleClient.verifyIdToken({
-                idToken,
-                audience: clientId,
-            });
+            let payload: any;
 
-            const payload = ticket.getPayload();
+            if (idToken) {
+                // Client-side OAuth flow - verify ID token directly
+                const ticket = await this.googleClient.verifyIdToken({
+                    idToken,
+                    audience: clientId,
+                });
+                payload = ticket.getPayload();
+            } else if (accessToken) {
+                // Server-side flow or legacy - get user info via API
+                const userInfoResponse = await fetch(`https://www.googleapis.com/oauth2/v2/userinfo?access_token=${accessToken}`);
+                const userInfo = await userInfoResponse.json();
+
+                if (userInfo.error) {
+                    throw new UnauthorizedException('Invalid Google access token');
+                }
+
+                // Map to expected payload format
+                payload = {
+                    sub: userInfo.id,
+                    email: userInfo.email,
+                    name: userInfo.name,
+                    picture: userInfo.picture,
+                    given_name: userInfo.given_name,
+                    family_name: userInfo.family_name,
+                    email_verified: userInfo.verified_email,
+                };
+            }
+
             if (!payload) {
                 throw new UnauthorizedException('Invalid Google token');
             }
@@ -225,93 +249,109 @@ export class AuthService {
     }
 
     async facebookAuth(dto: FacebookAuthDto) {
-        const accessToken = dto.accessToken;
-        if (!accessToken) {
-            throw new BadRequestException('Facebook access token is required');
-        }
+        try {
+            const { accessToken } = dto;
 
-        // Fetch user info from Facebook Graph API
-        const fields = 'id,name,first_name,last_name,email,picture.type(large)';
-        const url = `https://graph.facebook.com/me?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(accessToken)}`;
-        const res = await fetch(url).then(r => r.json());
+            if (!accessToken) {
+                throw new BadRequestException('Facebook access token is required');
+            }
 
-        if (res.error) {
-            throw new UnauthorizedException('Invalid Facebook token');
-        }
+            // Step 1: Verify token validity and get app info
+            const tokenDebugUrl = `https://graph.facebook.com/debug_token?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`;
+            const debugResponse = await fetch(tokenDebugUrl);
+            const debugData = await debugResponse.json();
 
-        const facebookId: string = res.id;
-        const email: string | undefined = res.email;
-        const fullName: string | undefined = res.name;
-        const firstName: string | undefined = res.first_name;
-        const lastName: string | undefined = res.last_name;
-        const picture: string | undefined = res.picture?.data?.url;
+            if (debugData.error || !debugData.data?.is_valid) {
+                throw new UnauthorizedException('Invalid or expired Facebook token');
+            }
 
-        if (!facebookId) {
-            throw new UnauthorizedException('Invalid Facebook token (no id)');
-        }
+            // Step 2: Fetch user info from Facebook Graph API
+            const fields = 'id,name,first_name,last_name,email,picture.type(large)';
+            const userUrl = `https://graph.facebook.com/me?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(accessToken)}`;
+            const userResponse = await fetch(userUrl);
+            const userData = await userResponse.json();
 
-        // Try find by facebookId
-        let user = await this.userService.findByFacebookId?.(facebookId);
+            if (userData.error) {
+                throw new UnauthorizedException(`Facebook API error: ${userData.error.message}`);
+            }
 
-        if (user) {
-            await this.userService.update(user.id, { lastSeen: new Date() });
-        } else {
-            // If email exists, link account; else create minimal account
-            if (email) {
-                const existing = await this.userService.findByEmail(email);
-                if (existing) {
-                    await this.userService.update(existing.id, {
+            const facebookId: string = userData.id;
+            const email: string | undefined = userData.email;
+            const fullName: string | undefined = userData.name;
+            const firstName: string | undefined = userData.first_name;
+            const lastName: string | undefined = userData.last_name;
+            const picture: string | undefined = userData.picture?.data?.url;
+
+            if (!facebookId) {
+                throw new UnauthorizedException('Invalid Facebook token (no user ID)');
+            }
+
+            // Try find by facebookId
+            let user = await this.userService.findByFacebookId?.(facebookId);
+
+            if (user) {
+                await this.userService.update(user.id, { lastSeen: new Date() });
+            } else {
+                // If email exists, link account; else create minimal account
+                if (email) {
+                    const existing = await this.userService.findByEmail(email);
+                    if (existing) {
+                        await this.userService.update(existing.id, {
+                            facebookId,
+                            provider: 'facebook',
+                            ...(picture ? { avatar: picture } : {}),
+                            role: UserRole.USER,
+                            lastSeen: new Date(),
+                            isVerified: true,
+                        });
+                        user = await this.userService.findById(existing.id);
+                    }
+                }
+
+                if (!user) {
+                    const usernameBase = email ? email.split('@')[0] : `fb_${facebookId.substring(0, 8)}`;
+                    const username = `${usernameBase}_${facebookId.substring(0, 6)}`;
+                    const created = await this.userService.create({
+                        email: email ?? `${username}@facebook.local`,
+                        username,
+                        password: undefined,
+                        ...(firstName ? { firstName } : {}),
+                        ...(lastName ? { lastName } : {}),
+                        ...(fullName ? { fullName } : {}),
+                        ...(picture ? { avatar: picture } : {}),
                         facebookId,
                         provider: 'facebook',
-                        ...(picture ? { avatar: picture } : {}),
-                        role: UserRole.USER,
-                        lastSeen: new Date(),
                         isVerified: true,
+                        isActive: true,
                     });
-                    user = await this.userService.findById(existing.id);
+                    user = await this.userService.findById(created.id);
                 }
             }
 
             if (!user) {
-                const usernameBase = email ? email.split('@')[0] : `fb_${facebookId.substring(0, 8)}`;
-                const username = `${usernameBase}_${facebookId.substring(0, 6)}`;
-                const created = await this.userService.create({
-                    email: email ?? `${username}@facebook.local`,
-                    username,
-                    password: undefined,
-                    ...(firstName ? { firstName } : {}),
-                    ...(lastName ? { lastName } : {}),
-                    ...(fullName ? { fullName } : {}),
-                    ...(picture ? { avatar: picture } : {}),
-                    facebookId,
-                    provider: 'facebook',
-                    isVerified: true,
-                    isActive: true,
-                });
-                user = await this.userService.findById(created.id);
+                throw new UnauthorizedException('Facebook authentication failed');
             }
-        }
 
-        if (!user) {
+            const tokens = await this.generateTokens(user);
+            return {
+                message: 'Facebook authentication successful',
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    username: user.username,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    fullName: user.fullName,
+                    avatar: user.avatar,
+                    role: user.role,
+                    isVerified: user.isVerified,
+                },
+                ...tokens,
+            };
+        } catch (error) {
+            console.error('Facebook auth error:', error);
             throw new UnauthorizedException('Facebook authentication failed');
         }
-
-        const tokens = await this.generateTokens(user);
-        return {
-            message: 'Facebook authentication successful',
-            user: {
-                id: user.id,
-                email: user.email,
-                username: user.username,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                fullName: user.fullName,
-                avatar: user.avatar,
-                role: user.role,
-                isVerified: user.isVerified,
-            },
-            ...tokens,
-        };
     }
 
     async login(loginDto: LoginDto) {
