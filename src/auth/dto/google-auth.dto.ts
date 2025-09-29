@@ -1,6 +1,5 @@
-import { IsString, IsOptional, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty, ValidateIf } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
 
 export class GoogleAuthDto {
     @ApiProperty({
@@ -25,12 +24,8 @@ export class GoogleAuthDto {
     @IsNotEmpty()
     accessToken?: string;
 
-    @Transform(({ obj }) => {
-        // Custom validation: at least one token must be provided
-        if (!obj.idToken && !obj.accessToken) {
-            throw new Error('Either idToken or accessToken must be provided');
-        }
-        return true;
-    })
-    private readonly _validation = true;
+    // Custom validation to ensure at least one token is provided
+    @ValidateIf(o => !o.idToken && !o.accessToken)
+    @IsString({ message: 'Either idToken or accessToken must be provided' })
+    _requireAtLeastOneToken?: never;
 }

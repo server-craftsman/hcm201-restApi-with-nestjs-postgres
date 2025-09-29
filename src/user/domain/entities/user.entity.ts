@@ -26,6 +26,7 @@ export class User implements IUser {
     updatedAt: Date;
     // OAuth fields
     googleId?: string;
+    facebookId?: string;
     provider?: string;
 
     constructor(data: IUser) {
@@ -54,6 +55,7 @@ export class User implements IUser {
         this.updatedAt = data.updatedAt;
         // OAuth fields
         this.googleId = data.googleId;
+        this.facebookId = data.facebookId;
         this.provider = data.provider;
     }
 
