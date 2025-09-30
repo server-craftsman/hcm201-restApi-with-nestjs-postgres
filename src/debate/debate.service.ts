@@ -24,6 +24,16 @@ export interface CreateThreadDto {
     requestedBy?: string;
 }
 
+export interface VoteStats {
+    threadId: string;
+    totalVotes: number;
+    support: number;
+    oppose: number;
+    supportPercentage: number;
+    opposePercentage: number;
+    userVote?: 'SUPPORT' | 'OPPOSE' | null;
+}
+
 export interface CreateVoteDto {
     userId: string;
     threadId: string;
@@ -103,7 +113,7 @@ export class DebateService {
         return await thread.save();
     }
 
-    async requestThread(title: string, description: string | undefined, requestedBy: string): Promise<DebateThreadDocument> {
+    async requestThread(title: string, description: string | undefined, requestedBy: string, extra?: { category?: string; summary?: string; priority?: 'HIGH' | 'MEDIUM' | 'LOW'; expectedParticipants?: string; images?: string[]; }): Promise<DebateThreadDocument> {
         // Any verified user can request
         const requester = await this.userModel.findById(requestedBy);
         if (!requester) {
@@ -120,8 +130,34 @@ export class DebateService {
             allowVoting: true,
             allowArguments: true,
             requireModeration: true,
+            // Extra metadata (non-breaking: stored as loose fields if schema allows)
+            category: extra?.category,
+            summary: extra?.summary,
+            priority: extra?.priority,
+            expectedParticipants: extra?.expectedParticipants,
+            images: extra?.images,
         });
         return await thread.save();
+    }
+
+    async getMyThreadRequests(userId: string, page: number = 1, limit: number = 20): Promise<{ items: DebateThreadDocument[]; totalItems: number; page: number; limit: number }> {
+        const requester = await this.userModel.findById(userId);
+        if (!requester) throw new NotFoundException('User not found');
+
+        const filter: any = { isTicketRequest: true, requestedBy: requester._id };
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const [items, totalItems] = await Promise.all([
+            this.debateThreadModel.find(filter)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.debateThreadModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
     }
 
     async approveThread(threadId: string, adminId: string, modForSideA: string, modForSideB: string): Promise<DebateThreadDocument> {
@@ -438,6 +474,56 @@ export class DebateService {
         return { support, oppose };
     }
 
+    async getMyVotes(userId: string, page: number = 1, limit: number = 20): Promise<{ items: VoteDocument[]; totalItems: number; page: number; limit: number }> {
+        const user = await this.userModel.findById(userId);
+        if (!user) throw new NotFoundException('User not found');
+
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const filter = { userId: user._id } as any;
+
+        const [items, totalItems] = await Promise.all([
+            this.voteModel.find(filter)
+                .populate('threadId', 'title status')
+                .sort({ votedAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.voteModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
+    }
+
+    async getVoteStats(threadId: string, userId?: string): Promise<VoteStats> {
+        const normalizedThreadId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
+        const votes = await this.voteModel.find({ threadId: normalizedThreadId }).exec();
+
+        const support = votes.filter(v => v.voteType === VoteType.SUPPORT).length;
+        const oppose = votes.filter(v => v.voteType === VoteType.OPPOSE).length;
+        const totalVotes = support + oppose;
+        const supportPercentage = totalVotes ? Number(((support / totalVotes) * 100).toFixed(2)) : 0;
+        const opposePercentage = totalVotes ? Number(((oppose / totalVotes) * 100).toFixed(2)) : 0;
+
+        let userVote: 'SUPPORT' | 'OPPOSE' | null | undefined = undefined;
+        if (userId) {
+            const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : (userId as any);
+            const myVote = await this.voteModel.findOne({ userId: userObjectId, threadId: normalizedThreadId }).lean();
+            userVote = myVote ? (myVote.voteType === VoteType.SUPPORT ? 'SUPPORT' : 'OPPOSE') : null;
+        }
+
+        return {
+            threadId: String(threadId),
+            totalVotes,
+            support,
+            oppose,
+            supportPercentage,
+            opposePercentage,
+            userVote,
+        };
+    }
+
     // Argument System
     async createArgument(data: CreateArgumentDto): Promise<ArgumentDocument> {
         // Validate required fields (argumentType is derived from user's vote)
@@ -552,6 +638,106 @@ export class DebateService {
         }
 
         return argument;
+    }
+
+    async getMyThreads(userId: string, page: number = 1, limit: number = 20): Promise<{ items: DebateThreadDocument[]; totalItems: number; page: number; limit: number }> {
+        const user = await this.userModel.findById(userId);
+        if (!user) throw new NotFoundException('User not found');
+
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const filter = { createdBy: user._id } as any;
+
+        const [items, totalItems] = await Promise.all([
+            this.debateThreadModel.find(filter)
+                .populate('moderators', 'username email firstName lastName avatar')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.debateThreadModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
+    }
+
+    async getMyArguments(userId: string, page: number = 1, limit: number = 20): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
+        const user = await this.userModel.findById(userId);
+        if (!user) throw new NotFoundException('User not found');
+
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const filter = { authorId: user._id } as any;
+
+        const [items, totalItems] = await Promise.all([
+            this.argumentModel.find(filter)
+                .populate('threadId', 'title status')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.argumentModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
+    }
+
+    async likeArgument(argumentId: string, userId: string): Promise<ArgumentDocument> {
+        if (!argumentId || !userId) {
+            throw new BadRequestException('argumentId and userId are required');
+        }
+        const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : undefined;
+        if (!userObjectId) throw new BadRequestException('Invalid userId');
+
+        const updated = await this.argumentModel.findByIdAndUpdate(
+            argumentId,
+            {
+                // addToSet prevents duplicates
+                $addToSet: { upvotedBy: userObjectId },
+                // ensure removal from opposite set
+                $pull: { downvotedBy: userObjectId },
+                // recompute counters atomically via pipeline update not available here; approximate with $inc
+            },
+            { new: true }
+        );
+        if (!updated) throw new NotFoundException('Argument not found');
+
+        // Recompute counters based on arrays to ensure correctness
+        const upvotes = updated.upvotedBy?.length || 0;
+        const downvotes = updated.downvotedBy?.length || 0;
+        updated.upvotes = upvotes;
+        updated.downvotes = downvotes;
+        updated.score = upvotes - downvotes;
+        await updated.save();
+        return updated;
+    }
+
+    async dislikeArgument(argumentId: string, userId: string): Promise<ArgumentDocument> {
+        if (!argumentId || !userId) {
+            throw new BadRequestException('argumentId and userId are required');
+        }
+        const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : undefined;
+        if (!userObjectId) throw new BadRequestException('Invalid userId');
+
+        const updated = await this.argumentModel.findByIdAndUpdate(
+            argumentId,
+            {
+                $addToSet: { downvotedBy: userObjectId },
+                $pull: { upvotedBy: userObjectId },
+            },
+            { new: true }
+        );
+        if (!updated) throw new NotFoundException('Argument not found');
+
+        const upvotes = updated.upvotedBy?.length || 0;
+        const downvotes = updated.downvotedBy?.length || 0;
+        updated.upvotes = upvotes;
+        updated.downvotes = downvotes;
+        updated.score = upvotes - downvotes;
+        await updated.save();
+        return updated;
     }
 
     // Moderation System
