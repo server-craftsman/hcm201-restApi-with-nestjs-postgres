@@ -14,7 +14,6 @@ export interface IUser {
     gender?: 'MALE' | 'FEMALE' | 'OTHER';
     bio?: string;
     location?: string;
-    website?: string;
     role: UserRole;
     status: UserStatus;
     isVerified: boolean;
@@ -43,7 +42,6 @@ export interface ICreateUser {
     gender?: 'MALE' | 'FEMALE' | 'OTHER';
     bio?: string;
     location?: string;
-    website?: string;
     role?: UserRole;
     isVerified?: boolean;
     isActive?: boolean;
@@ -65,7 +63,6 @@ export interface IUpdateUser {
     gender?: 'MALE' | 'FEMALE' | 'OTHER';
     bio?: string;
     location?: string;
-    website?: string;
     role?: UserRole;
     isVerified?: boolean;
     isActive?: boolean;

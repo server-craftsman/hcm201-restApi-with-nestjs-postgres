@@ -17,7 +17,6 @@ export interface CreateUserDto {
     gender?: string;
     bio?: string;
     location?: string;
-    website?: string;
     role?: UserRole;
     googleId?: string;
     facebookId?: string;
@@ -38,7 +37,6 @@ export interface UpdateUserDto {
     gender?: string;
     bio?: string;
     location?: string;
-    website?: string;
     role?: UserRole;
     status?: UserStatus;
     isVerified?: boolean;
@@ -49,6 +47,7 @@ export interface UpdateUserDto {
     googleId?: string;
     facebookId?: string;
     provider?: string;
+    password?: string;
 }
 
 @Injectable()

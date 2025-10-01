@@ -30,6 +30,9 @@ export class Argument {
     @Prop({ type: Types.ObjectId, ref: 'DebateThread', required: true })
     threadId: Types.ObjectId;
 
+    @Prop({ type: Types.ObjectId, ref: 'Argument' })
+    parentArgumentId?: Types.ObjectId;
+
     @Prop({ enum: ArgumentType, required: true })
     argumentType: ArgumentType;
 

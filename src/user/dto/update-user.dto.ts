@@ -86,14 +86,14 @@ export class UpdateUserDto {
     @IsString()
     location?: string;
 
-    @ApiPropertyOptional({
-        description: 'Website cá nhân',
-        example: 'https://example.com',
-        type: String,
-    })
-    @IsOptional()
-    @IsUrl()
-    website?: string;
+    // @ApiPropertyOptional({
+    //     description: 'Website cá nhân',
+    //     example: 'https://example.com',
+    //     type: String,
+    // })
+    // @IsOptional()
+    // @IsUrl()
+    // website?: string;
 
     @ApiPropertyOptional({
         description: 'URL avatar mới của người dùng',

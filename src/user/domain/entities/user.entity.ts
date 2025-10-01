@@ -14,7 +14,6 @@ export class User implements IUser {
     gender?: 'MALE' | 'FEMALE' | 'OTHER';
     bio?: string;
     location?: string;
-    website?: string;
     role: UserRole;
     status: UserStatus;
     isVerified: boolean;
@@ -43,7 +42,6 @@ export class User implements IUser {
         this.gender = data.gender;
         this.bio = data.bio;
         this.location = data.location;
-        this.website = data.website;
         this.role = data.role;
         this.status = data.status;
         this.isVerified = data.isVerified;
@@ -78,7 +76,6 @@ export class User implements IUser {
             gender: data.gender,
             bio: data.bio,
             location: data.location,
-            website: data.website,
             role: data.role || UserRole.USER,
             status: UserStatus.OFFLINE,
             isVerified: data.isVerified || false,
@@ -103,7 +100,6 @@ export class User implements IUser {
         if (data.gender) this.gender = data.gender;
         if (data.bio) this.bio = data.bio;
         if (data.location) this.location = data.location;
-        if (data.website) this.website = data.website;
         if (data.avatar !== undefined) this.avatar = data.avatar;
         if (data.role) this.role = data.role;
         if (data.isVerified !== undefined) this.isVerified = data.isVerified;
@@ -224,7 +220,6 @@ export class User implements IUser {
             gender: this.gender,
             bio: this.bio,
             location: this.location,
-            website: this.website,
             role: this.role,
             status: this.status,
             isVerified: this.isVerified,

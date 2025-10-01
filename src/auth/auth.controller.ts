@@ -1,8 +1,8 @@
 import {
-    Controller, Post, Body, UseGuards, HttpCode, HttpStatus, Get, Request, Param, HttpException
+    Controller, Post, Body, UseGuards, HttpCode, HttpStatus, Get, Request, Param, HttpException, Patch, Query
 } from '@nestjs/common';
 import {
-    ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam,
+    ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
@@ -12,8 +12,14 @@ import { RegisterDto } from './dto/register.dto';
 import { GoogleAuthDto } from './dto/google-auth.dto';
 import { FacebookAuthDto } from './dto/facebook-auth.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ChangeRoleDto } from './dto/change-role.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { AdminChangePasswordDto } from './dto/admin-change-password.dto';
 import { ICreateUser } from '../user/domain/interfaces/user.interface';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { Roles } from '../roles/decorators/roles.decorator';
+import { RolesGuard } from '../roles/guards/roles.guard';
+import { UserRole } from '../database/schemas/user.schema';
 import { ApiResponseDto, ErrorResponseDto } from '../common/dto/api-response.dto';
 // authorization
 
@@ -456,6 +462,170 @@ export class AuthController {
         return {
             statusCode: 200,
             message: 'Verification email sent successfully',
+            data: result,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    // Role Management APIs
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+    @Patch('admin/change-role')
+    @ApiOperation({ summary: 'Admin thay đổi role của người dùng' })
+    @ApiResponse({
+        status: 200,
+        description: 'Role đã được thay đổi thành công',
+        type: ApiResponseDto,
+    })
+    @ApiResponse({
+        status: 403,
+        description: 'Không có quyền thay đổi role',
+        type: ErrorResponseDto,
+    })
+    @ApiResponse({
+        status: 404,
+        description: 'Người dùng không tồn tại',
+        type: ErrorResponseDto,
+    })
+    @ApiBearerAuth()
+    @HttpCode(HttpStatus.OK)
+    async changeUserRole(
+        @Body() changeRoleDto: ChangeRoleDto,
+        @Request() req,
+    ): Promise<ApiResponseDto> {
+        const result = await this.authService.changeUserRole(
+            changeRoleDto.userId,
+            changeRoleDto.newRole,
+            req.user.id,
+            changeRoleDto.reason,
+        );
+        return {
+            statusCode: 200,
+            message: 'User role changed successfully',
+            data: result,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    // Password Management APIs
+    @UseGuards(JwtAuthGuard)
+    @Patch('change-password')
+    @ApiOperation({ summary: 'Người dùng thay đổi mật khẩu của chính mình' })
+    @ApiResponse({
+        status: 200,
+        description: 'Mật khẩu đã được thay đổi thành công',
+        type: ApiResponseDto,
+    })
+    @ApiResponse({
+        status: 400,
+        description: 'Mật khẩu hiện tại không đúng hoặc mật khẩu mới không khớp',
+        type: ErrorResponseDto,
+    })
+    @ApiBearerAuth()
+    @HttpCode(HttpStatus.OK)
+    async changePassword(
+        @Body() changePasswordDto: ChangePasswordDto,
+        @Request() req,
+    ): Promise<ApiResponseDto> {
+        const result = await this.authService.changePassword(
+            req.user.id,
+            changePasswordDto.currentPassword,
+            changePasswordDto.newPassword,
+            changePasswordDto.confirmPassword,
+        );
+        return {
+            statusCode: 200,
+            message: result.message,
+            data: null,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+    @Patch('admin/change-password')
+    @ApiOperation({ summary: 'Admin thay đổi mật khẩu của người dùng' })
+    @ApiResponse({
+        status: 200,
+        description: 'Mật khẩu đã được thay đổi thành công',
+        type: ApiResponseDto,
+    })
+    @ApiResponse({
+        status: 403,
+        description: 'Không có quyền thay đổi mật khẩu',
+        type: ErrorResponseDto,
+    })
+    @ApiResponse({
+        status: 404,
+        description: 'Người dùng không tồn tại',
+        type: ErrorResponseDto,
+    })
+    @ApiBearerAuth()
+    @HttpCode(HttpStatus.OK)
+    async adminChangePassword(
+        @Body() adminChangePasswordDto: AdminChangePasswordDto,
+        @Request() req,
+    ): Promise<ApiResponseDto> {
+        const result = await this.authService.adminChangePassword(
+            adminChangePasswordDto.userId,
+            adminChangePasswordDto.newPassword,
+            req.user.id,
+            adminChangePasswordDto.reason,
+        );
+        return {
+            statusCode: 200,
+            message: result.message,
+            data: null,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    // User Management APIs
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+    @Get('admin/user-roles')
+    @ApiOperation({ summary: 'Lấy thống kê số lượng người dùng theo role' })
+    @ApiResponse({
+        status: 200,
+        description: 'Thống kê role retrieved successfully',
+        type: ApiResponseDto,
+    })
+    @ApiBearerAuth()
+    async getUserRoles(): Promise<ApiResponseDto> {
+        const result = await this.authService.getUserRoles();
+        return {
+            statusCode: 200,
+            message: 'User roles statistics retrieved successfully',
+            data: result,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+    @Get('admin/users-by-role/:role')
+    @ApiOperation({ summary: 'Lấy danh sách người dùng theo role' })
+    @ApiResponse({
+        status: 200,
+        description: 'Users retrieved successfully',
+        type: ApiResponseDto,
+    })
+    @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+    @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+    @ApiBearerAuth()
+    async getUsersByRole(
+        @Param('role') role: UserRole,
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+    ): Promise<ApiResponseDto> {
+        const result = await this.authService.getUsersByRole(
+            role,
+            Number(page) || 1,
+            Number(limit) || 20,
+        );
+        return {
+            statusCode: 200,
+            message: 'Users retrieved successfully',
             data: result,
             timestamp: new Date().toISOString(),
         };

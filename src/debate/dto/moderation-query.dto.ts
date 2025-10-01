@@ -4,7 +4,7 @@ import { Type } from 'class-transformer';
 import { ArgumentStatus, ArgumentType } from '../../database/schemas/argument.schema';
 
 export class ModerationQueueQueryDto {
-    @ApiPropertyOptional({ enum: ArgumentStatus, description: 'Filter by argument status' })
+    @ApiPropertyOptional({ enum: ArgumentStatus, description: 'Filter by argument status (default: all statuses)' })
     @IsOptional()
     @IsEnum(ArgumentStatus)
     status?: ArgumentStatus;

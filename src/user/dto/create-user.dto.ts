@@ -96,15 +96,6 @@ export class CreateUserDto {
     location?: string;
 
     @ApiPropertyOptional({
-        description: 'Website cá nhân',
-        example: 'https://example.com',
-        type: String,
-    })
-    @IsOptional()
-    @IsUrl()
-    website?: string;
-
-    @ApiPropertyOptional({
         description: 'URL avatar của người dùng',
         example: 'https://example.com/avatar.jpg',
         type: String,

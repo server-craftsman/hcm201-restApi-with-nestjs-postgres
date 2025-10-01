@@ -101,7 +101,6 @@ export class UserController {
             gender: createUserDto.gender,
             bio: createUserDto.bio,
             location: createUserDto.location,
-            website: createUserDto.website,
             avatar: createUserDto.avatar,
             role: createUserDto.role,
         };
@@ -315,7 +314,6 @@ export class UserController {
             gender: updateUserDto.gender,
             bio: updateUserDto.bio,
             location: updateUserDto.location,
-            website: updateUserDto.website,
             role: updateUserDto.role,
         };
         const result = await this.userService.update(id, userData);

@@ -61,9 +61,6 @@ export class User {
     @Prop()
     location?: string;
 
-    @Prop()
-    website?: string;
-
     @Prop({ enum: UserRole, default: UserRole.USER })
     role: UserRole;
 
@@ -94,6 +91,12 @@ export class User {
 
     @Prop({ default: 'local' })
     provider: string;
+
+    @Prop()
+    createdAt?: Date;
+
+    @Prop()
+    updatedAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

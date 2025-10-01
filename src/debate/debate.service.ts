@@ -215,8 +215,10 @@ export class DebateService {
         })();
 
         const baseFilter: any = {};
-        // Status defaults to PENDING if not provided
-        baseFilter.status = query?.status ?? ArgumentStatus.PENDING;
+        // Status filter - if not provided, get all statuses
+        if (query?.status) {
+            baseFilter.status = query.status;
+        }
         if (query?.argumentType) baseFilter.argumentType = query.argumentType;
         if (query?.threadId) baseFilter.threadId = Types.ObjectId.isValid(query.threadId) ? new Types.ObjectId(query.threadId) : query.threadId;
         if (query?.search) {
@@ -317,24 +319,45 @@ export class DebateService {
         options?: { search?: string; createdBy?: string; moderatorId?: string; sort?: string },
     ): Promise<{ items: DebateThreadDocument[]; totalItems: number; page: number; limit: number }> {
         const filter: any = {};
-        if (status) filter.status = status;
+
+        // Status filter
+        if (status) {
+            filter.status = status;
+        }
+
+        // CreatedBy filter
         if (options?.createdBy) {
             filter.createdBy = Types.ObjectId.isValid(options.createdBy) ? new Types.ObjectId(options.createdBy) : options.createdBy;
         }
+
+        // ModeratorId filter
         if (options?.moderatorId) {
-            const id = Types.ObjectId.isValid(options.moderatorId) ? new Types.ObjectId(options.moderatorId) : options.moderatorId;
+            const moderatorId = Types.ObjectId.isValid(options.moderatorId) ? new Types.ObjectId(options.moderatorId) : options.moderatorId;
             filter.$or = [
-                { modForSideA: id },
-                { modForSideB: id },
-                { moderators: id },
+                { modForSideA: moderatorId },
+                { modForSideB: moderatorId },
+                { moderators: moderatorId },
             ];
         }
+
+        // Search filter
         if (options?.search) {
-            const text = options.search;
-            filter.$or = (filter.$or || []).concat([
-                { title: { $regex: text, $options: 'i' } },
-                { description: { $regex: text, $options: 'i' } },
-            ]);
+            const searchRegex = { $regex: options.search, $options: 'i' };
+            const searchConditions = [
+                { title: searchRegex },
+                { description: searchRegex }
+            ];
+
+            if (filter.$or) {
+                // If moderatorId filter exists, combine with search using $and
+                filter.$and = [
+                    { $or: filter.$or },
+                    { $or: searchConditions }
+                ];
+                delete filter.$or;
+            } else {
+                filter.$or = searchConditions;
+            }
         }
 
         const skip = Math.max(0, (Number(page) - 1) * Number(limit));
@@ -347,10 +370,14 @@ export class DebateService {
             return { [field]: direction };
         })();
 
+        console.log('🔍 getAllThreads filter:', JSON.stringify(filter, null, 2));
+
         const [items, totalItems] = await Promise.all([
             this.debateThreadModel.find(filter)
                 .populate('createdBy', 'username email firstName lastName avatar')
                 .populate('moderators', 'username email firstName lastName avatar')
+                .populate('modForSideA', 'username email firstName lastName avatar')
+                .populate('modForSideB', 'username email firstName lastName avatar')
                 .sort(sort)
                 .skip(skip)
                 .limit(take)
@@ -358,39 +385,25 @@ export class DebateService {
             this.debateThreadModel.countDocuments(filter),
         ]);
 
+        console.log('📊 getAllThreads result:', { itemsCount: items.length, totalItems });
+
         return { items, totalItems, page: Number(page), limit: take };
     }
 
-    async updateThreadStatus(id: string, status: ThreadStatus, userId: string): Promise<DebateThreadDocument> {
-        const thread = await this.debateThreadModel.findById(id);
-        if (!thread) {
-            throw new NotFoundException('Debate thread not found');
-        }
+    // Debug method to check database content
+    async debugThreads(): Promise<any> {
+        const totalCount = await this.debateThreadModel.countDocuments();
+        const statusCounts = await this.debateThreadModel.aggregate([
+            { $group: { _id: '$status', count: { $sum: 1 } } }
+        ]);
+        const sampleThreads = await this.debateThreadModel.find().limit(5).select('title status createdAt').exec();
 
-        // Check if user has permission to update thread
-        const user = await this.userModel.findById(userId);
-        if (!user) {
-            throw new NotFoundException('User not found');
-        }
-
-        const isModerator = thread.moderators.some(modId => modId.toString() === userId);
-        const isCreator = thread.createdBy.toString() === userId;
-
-        if (![UserRole.ADMIN, UserRole.MODERATOR].includes(user.role) && !isModerator && !isCreator) {
-            throw new ForbiddenException('You don\'t have permission to update this thread');
-        }
-
-        const updatedThread = await this.debateThreadModel.findByIdAndUpdate(
-            id,
-            { status },
-            { new: true }
-        ).exec();
-
-        if (!updatedThread) {
-            throw new NotFoundException('Thread not found after update');
-        }
-
-        return updatedThread;
+        return {
+            totalCount,
+            statusCounts,
+            sampleThreads,
+            timestamp: new Date()
+        };
     }
 
     // Voting System
@@ -631,11 +644,16 @@ export class DebateService {
         const argument = await this.argumentModel.findById(id)
             .populate('authorId', 'username email firstName lastName avatar')
             .populate('moderatedBy', 'username email firstName lastName avatar')
+            .populate('threadId', 'title status description')
+            .populate('parentArgumentId', 'title content authorId')
             .exec();
 
         if (!argument) {
             throw new NotFoundException('Argument not found');
         }
+
+        // Increment view count
+        await this.argumentModel.findByIdAndUpdate(id, { $inc: { viewCount: 1 } });
 
         return argument;
     }
@@ -891,6 +909,557 @@ export class DebateService {
             pendingArguments,
             rejectedArguments,
             flaggedArguments,
+        };
+    }
+
+    async updateThreadStatus(
+        threadId: string,
+        status: ThreadStatus,
+        reason?: string,
+        moderatorId?: string,
+    ): Promise<DebateThreadDocument> {
+        const thread = await this.debateThreadModel.findById(threadId);
+        if (!thread) {
+            throw new NotFoundException('Thread not found');
+        }
+
+        // Validate status transition
+        const currentStatus = thread.status;
+        const validTransitions = this.getValidStatusTransitions(currentStatus);
+        if (!validTransitions.includes(status)) {
+            throw new BadRequestException(`Cannot change status from ${currentStatus} to ${status}`);
+        }
+
+        // Require reason for rejection
+        if (status === ThreadStatus.CLOSED && !reason) {
+            throw new BadRequestException('Reason is required when closing a thread');
+        }
+
+        // Update thread status
+        const updateData: any = { status };
+
+        if (reason) {
+            updateData.rejectionReason = reason;
+        }
+
+        if (status === ThreadStatus.ACTIVE) {
+            updateData.startDate = new Date();
+        } else if (status === ThreadStatus.CLOSED) {
+            updateData.endDate = new Date();
+            updateData.allowVoting = false;
+            updateData.allowArguments = false;
+        }
+
+        const updatedThread = await this.debateThreadModel.findByIdAndUpdate(
+            threadId,
+            updateData,
+            { new: true }
+        ).populate('createdBy', 'username email firstName lastName avatar')
+            .populate('moderators', 'username email firstName lastName avatar')
+            .populate('modForSideA', 'username email firstName lastName avatar')
+            .populate('modForSideB', 'username email firstName lastName avatar')
+            .exec();
+
+        if (!updatedThread) {
+            throw new NotFoundException('Thread not found after update');
+        }
+
+        return updatedThread;
+    }
+
+    private getValidStatusTransitions(currentStatus: ThreadStatus): ThreadStatus[] {
+        switch (currentStatus) {
+            case ThreadStatus.DRAFT:
+                return [ThreadStatus.ACTIVE, ThreadStatus.CLOSED];
+            case ThreadStatus.ACTIVE:
+                return [ThreadStatus.PAUSED, ThreadStatus.CLOSED, ThreadStatus.ARCHIVED];
+            case ThreadStatus.PAUSED:
+                return [ThreadStatus.ACTIVE, ThreadStatus.CLOSED, ThreadStatus.ARCHIVED];
+            case ThreadStatus.CLOSED:
+                return [ThreadStatus.ARCHIVED];
+            case ThreadStatus.ARCHIVED:
+                return []; // No transitions from archived
+            default:
+                return [];
+        }
+    }
+
+    async replyToArgument(
+        argumentId: string,
+        replyData: any,
+        userId: string,
+    ): Promise<ArgumentDocument> {
+        // Find the parent argument
+        const parentArgument = await this.argumentModel.findById(argumentId)
+            .populate('threadId')
+            .exec();
+
+        if (!parentArgument) {
+            throw new NotFoundException('Parent argument not found');
+        }
+
+        // Check if thread allows arguments
+        const thread = parentArgument.threadId as any;
+        if (!thread.allowArguments) {
+            throw new BadRequestException('This thread no longer accepts new arguments');
+        }
+
+        // Check if user is not the author of the parent argument
+        if (parentArgument.authorId.toString() === userId) {
+            throw new BadRequestException('Cannot reply to your own argument');
+        }
+
+        // Create reply argument
+        const replyArgument = new this.argumentModel({
+            title: replyData.title || `Phản hồi: ${parentArgument.title}`,
+            content: replyData.content,
+            authorId: new Types.ObjectId(userId),
+            threadId: parentArgument.threadId,
+            parentArgumentId: new Types.ObjectId(argumentId),
+            argumentType: ArgumentType.NEUTRAL, // Replies are neutral by default
+            status: ArgumentStatus.PENDING,
+            source: replyData.source,
+            evidenceUrls: replyData.evidenceUrls,
+        });
+
+        const savedReply = await replyArgument.save();
+
+        // Populate the reply with author and parent argument info
+        const populatedReply = await this.argumentModel.findById(savedReply._id)
+            .populate('authorId', 'username email firstName lastName avatar')
+            .populate('parentArgumentId', 'title content')
+            .populate('threadId', 'title status')
+            .exec();
+
+        if (!populatedReply) {
+            throw new NotFoundException('Reply not found after creation');
+        }
+
+        return populatedReply as ArgumentDocument;
+    }
+
+    async getArgumentReplies(
+        argumentId: string,
+        page: number = 1,
+        limit: number = 20,
+    ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
+        const filter = { parentArgumentId: new Types.ObjectId(argumentId) };
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const [items, totalItems] = await Promise.all([
+            this.argumentModel.find(filter)
+                .populate('authorId', 'username email firstName lastName avatar')
+                .populate('parentArgumentId', 'title content')
+                .populate('threadId', 'title status')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.argumentModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
+    }
+
+    // Admin Dashboard Statistics
+    async getThreadStatusStats(): Promise<{
+        pending: number;
+        active: number;
+        paused: number;
+        closed: number;
+        archived: number;
+        total: number;
+    }> {
+        const [
+            pending,
+            active,
+            paused,
+            closed,
+            archived,
+            total
+        ] = await Promise.all([
+            this.debateThreadModel.countDocuments({ status: ThreadStatus.DRAFT }),
+            this.debateThreadModel.countDocuments({ status: ThreadStatus.ACTIVE }),
+            this.debateThreadModel.countDocuments({ status: ThreadStatus.PAUSED }),
+            this.debateThreadModel.countDocuments({ status: ThreadStatus.CLOSED }),
+            this.debateThreadModel.countDocuments({ status: ThreadStatus.ARCHIVED }),
+            this.debateThreadModel.countDocuments(),
+        ]);
+
+        return { pending, active, paused, closed, archived, total };
+    }
+
+    async getArgumentStatusStats(): Promise<{
+        pending: number;
+        approved: number;
+        rejected: number;
+        flagged: number;
+        total: number;
+    }> {
+        const [
+            pending,
+            approved,
+            rejected,
+            flagged,
+            total
+        ] = await Promise.all([
+            this.argumentModel.countDocuments({ status: ArgumentStatus.PENDING }),
+            this.argumentModel.countDocuments({ status: ArgumentStatus.APPROVED }),
+            this.argumentModel.countDocuments({ status: ArgumentStatus.REJECTED }),
+            this.argumentModel.countDocuments({ status: ArgumentStatus.FLAGGED }),
+            this.argumentModel.countDocuments(),
+        ]);
+
+        return { pending, approved, rejected, flagged, total };
+    }
+
+    async getUserActivityStats(): Promise<{
+        online: number;
+        offline: number;
+        busy: number;
+        away: number;
+        total: number;
+        newUsersLast7Days: number;
+        activeUsersLast24Hours: number;
+    }> {
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const twentyFourHoursAgo = new Date();
+        twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+        const [
+            online,
+            offline,
+            busy,
+            away,
+            total,
+            newUsersLast7Days,
+            activeUsersLast24Hours
+        ] = await Promise.all([
+            this.userModel.countDocuments({ status: 'ONLINE' }),
+            this.userModel.countDocuments({ status: 'OFFLINE' }),
+            this.userModel.countDocuments({ status: 'BUSY' }),
+            this.userModel.countDocuments({ status: 'AWAY' }),
+            this.userModel.countDocuments(),
+            this.userModel.countDocuments({ createdAt: { $gte: sevenDaysAgo } }),
+            this.userModel.countDocuments({ lastSeen: { $gte: twentyFourHoursAgo } }),
+        ]);
+
+        return { online, offline, busy, away, total, newUsersLast7Days, activeUsersLast24Hours };
+    }
+
+    async getSystemOverviewStats(): Promise<{
+        totalVotes: number;
+        supportVotes: number;
+        opposeVotes: number;
+        totalLikes: number;
+        totalDislikes: number;
+        totalReplies: number;
+        totalViews: number;
+    }> {
+        const [
+            totalVotes,
+            supportVotes,
+            opposeVotes,
+            totalLikes,
+            totalDislikes,
+            totalReplies,
+            totalViews
+        ] = await Promise.all([
+            this.voteModel.countDocuments(),
+            this.voteModel.countDocuments({ voteType: 'SUPPORT' }),
+            this.voteModel.countDocuments({ voteType: 'OPPOSE' }),
+            this.argumentModel.aggregate([
+                { $group: { _id: null, total: { $sum: '$upvotes' } } }
+            ]).then(result => result[0]?.total || 0),
+            this.argumentModel.aggregate([
+                { $group: { _id: null, total: { $sum: '$downvotes' } } }
+            ]).then(result => result[0]?.total || 0),
+            this.argumentModel.countDocuments({ parentArgumentId: { $exists: true } }),
+            this.argumentModel.aggregate([
+                { $group: { _id: null, total: { $sum: '$viewCount' } } }
+            ]).then(result => result[0]?.total || 0),
+        ]);
+
+        return { totalVotes, supportVotes, opposeVotes, totalLikes, totalDislikes, totalReplies, totalViews };
+    }
+
+    async getRecentActivity(limit: number = 10): Promise<Array<{
+        id: string;
+        type: string;
+        title: string;
+        user: string;
+        timestamp: Date;
+        status?: string;
+    }>> {
+        const activities: Array<{
+            id: string;
+            type: string;
+            title: string;
+            user: string;
+            timestamp: Date;
+            status?: string;
+        }> = [];
+
+        // Recent threads
+        const recentThreads = await this.debateThreadModel
+            .find()
+            .populate('createdBy', 'username')
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .exec();
+
+        recentThreads.forEach((thread: any) => {
+            activities.push({
+                id: thread._id.toString(),
+                type: 'thread_created',
+                title: thread.title,
+                user: thread.createdBy?.username || 'Unknown',
+                timestamp: thread.createdAt,
+                status: thread.status,
+            });
+        });
+
+        // Recent arguments
+        const recentArguments = await this.argumentModel
+            .find()
+            .populate('authorId', 'username')
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .exec();
+
+        recentArguments.forEach((argument: any) => {
+            activities.push({
+                id: argument._id.toString(),
+                type: 'argument_created',
+                title: argument.title,
+                user: argument.authorId?.username || 'Unknown',
+                timestamp: argument.createdAt,
+                status: argument.status,
+            });
+        });
+
+        // Recent votes
+        const recentVotes = await this.voteModel
+            .find()
+            .populate('userId', 'username')
+            .sort({ votedAt: -1 })
+            .limit(limit)
+            .exec();
+
+        recentVotes.forEach((vote: any) => {
+            activities.push({
+                id: vote._id.toString(),
+                type: 'vote_cast',
+                title: `Vote ${vote.voteType}`,
+                user: vote.userId?.username || 'Unknown',
+                timestamp: vote.votedAt,
+                status: vote.voteType,
+            });
+        });
+
+        // Sort by timestamp and return top activities
+        return activities
+            .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+            .slice(0, limit);
+    }
+
+    async getAdminDashboard(): Promise<{
+        threadStats: any;
+        argumentStats: any;
+        userStats: any;
+        systemStats: any;
+        recentActivity: any[];
+        lastUpdated: Date;
+    }> {
+        const [
+            threadStats,
+            argumentStats,
+            userStats,
+            systemStats,
+            recentActivity
+        ] = await Promise.all([
+            this.getThreadStatusStats(),
+            this.getArgumentStatusStats(),
+            this.getUserActivityStats(),
+            this.getSystemOverviewStats(),
+            this.getRecentActivity(15),
+        ]);
+
+        return {
+            threadStats,
+            argumentStats,
+            userStats,
+            systemStats,
+            recentActivity,
+            lastUpdated: new Date(),
+        };
+    }
+
+    // Moderator Dashboard Statistics
+    async getModeratorDashboard(): Promise<{
+        assignedThreads: number;
+        pendingModeration: number;
+        moderatedToday: number;
+        totalModerated: number;
+        recentActivity: any[];
+        lastUpdated: Date;
+    }> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const [
+            assignedThreads,
+            pendingModeration,
+            moderatedToday,
+            totalModerated,
+            recentActivity
+        ] = await Promise.all([
+            this.debateThreadModel.countDocuments({
+                $or: [
+                    { moderators: { $exists: true, $ne: [] } },
+                    { modForSideA: { $exists: true } },
+                    { modForSideB: { $exists: true } }
+                ]
+            }),
+            this.argumentModel.countDocuments({ status: ArgumentStatus.PENDING }),
+            this.argumentModel.countDocuments({
+                status: { $in: [ArgumentStatus.APPROVED, ArgumentStatus.REJECTED] },
+                moderatedAt: { $gte: today }
+            }),
+            this.argumentModel.countDocuments({
+                status: { $in: [ArgumentStatus.APPROVED, ArgumentStatus.REJECTED] }
+            }),
+            this.getRecentActivity(10)
+        ]);
+
+        return {
+            assignedThreads,
+            pendingModeration,
+            moderatedToday,
+            totalModerated,
+            recentActivity,
+            lastUpdated: new Date(),
+        };
+    }
+
+    async getAssignedThreads(
+        moderatorId: string,
+        page: number = 1,
+        limit: number = 20,
+    ): Promise<{ items: DebateThreadDocument[]; totalItems: number; page: number; limit: number }> {
+        const filter = {
+            $or: [
+                { moderators: new Types.ObjectId(moderatorId) },
+                { modForSideA: new Types.ObjectId(moderatorId) },
+                { modForSideB: new Types.ObjectId(moderatorId) }
+            ]
+        };
+
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const [items, totalItems] = await Promise.all([
+            this.debateThreadModel.find(filter)
+                .populate('createdBy', 'username email firstName lastName avatar')
+                .populate('moderators', 'username email firstName lastName avatar')
+                .populate('modForSideA', 'username email firstName lastName avatar')
+                .populate('modForSideB', 'username email firstName lastName avatar')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.debateThreadModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
+    }
+
+    async getPendingModeration(
+        moderatorId: string,
+        page: number = 1,
+        limit: number = 20,
+    ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
+        // Get threads assigned to this moderator
+        const assignedThreads = await this.debateThreadModel.find({
+            $or: [
+                { moderators: new Types.ObjectId(moderatorId) },
+                { modForSideA: new Types.ObjectId(moderatorId) },
+                { modForSideB: new Types.ObjectId(moderatorId) }
+            ]
+        }).select('_id').exec();
+
+        const threadIds = assignedThreads.map(thread => thread._id);
+
+        const filter = {
+            threadId: { $in: threadIds },
+            status: ArgumentStatus.PENDING // This method specifically gets pending arguments
+        };
+
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const [items, totalItems] = await Promise.all([
+            this.argumentModel.find(filter)
+                .populate('authorId', 'username email firstName lastName avatar')
+                .populate('threadId', 'title status')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.argumentModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
+    }
+
+    async getModerationStats(moderatorId: string): Promise<{
+        totalModerated: number;
+        approvedToday: number;
+        rejectedToday: number;
+        pendingCount: number;
+        moderationRate: number;
+    }> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const [
+            totalModerated,
+            approvedToday,
+            rejectedToday,
+            pendingCount
+        ] = await Promise.all([
+            this.argumentModel.countDocuments({
+                moderatedBy: new Types.ObjectId(moderatorId),
+                status: { $in: [ArgumentStatus.APPROVED, ArgumentStatus.REJECTED] }
+            }),
+            this.argumentModel.countDocuments({
+                moderatedBy: new Types.ObjectId(moderatorId),
+                status: ArgumentStatus.APPROVED,
+                moderatedAt: { $gte: today }
+            }),
+            this.argumentModel.countDocuments({
+                moderatedBy: new Types.ObjectId(moderatorId),
+                status: ArgumentStatus.REJECTED,
+                moderatedAt: { $gte: today }
+            }),
+            this.argumentModel.countDocuments({
+                moderatedBy: new Types.ObjectId(moderatorId),
+                status: ArgumentStatus.PENDING
+            })
+        ]);
+
+        const moderationRate = totalModerated > 0 ?
+            Math.round((approvedToday / (approvedToday + rejectedToday)) * 100) : 0;
+
+        return {
+            totalModerated,
+            approvedToday,
+            rejectedToday,
+            pendingCount,
+            moderationRate: isNaN(moderationRate) ? 0 : moderationRate,
         };
     }
 }

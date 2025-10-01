@@ -1,5 +1,7 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
 import { LoginDto } from './dto/login.dto';
@@ -10,6 +12,7 @@ import { User, UserDocument, UserStatus } from '../database/schemas/user.schema'
 import { UserRole } from '../database/schemas/user.schema';
 import { randomBytes } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class AuthService {
@@ -20,6 +23,7 @@ export class AuthService {
         private readonly userService: UserService,
         private readonly jwtService: JwtService,
         private readonly mailService: MailService,
+        @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     ) {
         this.googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
     }
@@ -99,12 +103,13 @@ export class AuthService {
                     gender: user.gender,
                     bio: user.bio,
                     location: user.location,
-                    website: user.website,
                     role: user.role,
                     status: user.status,
                     isVerified: user.isVerified,
                     isActive: user.isActive,
                     lastSeen: user.lastSeen,
+                    createdAt: user.createdAt,
+                    updatedAt: user.updatedAt,
                 },
             };
         } catch (error) {
@@ -239,6 +244,10 @@ export class AuthService {
                     avatar: user.avatar,
                     role: user.role,
                     isVerified: user.isVerified,
+                    isActive: user.isActive,
+                    lastSeen: user.lastSeen,
+                    createdAt: user.createdAt,
+                    updatedAt: user.updatedAt,
                 },
                 ...tokens,
             };
@@ -403,12 +412,13 @@ export class AuthService {
                 gender: user.gender,
                 bio: user.bio,
                 location: user.location,
-                website: user.website,
                 role: user.role,
                 status: user.status,
                 isVerified: user.isVerified,
                 isActive: user.isActive,
                 lastSeen: user.lastSeen,
+                createdAt: user.createdAt,
+                updatedAt: user.updatedAt,
             },
         };
     }
@@ -574,5 +584,140 @@ export class AuthService {
         });
 
         return { access_token, refresh_token };
+    }
+
+    // Role Management
+    async changeUserRole(userId: string, newRole: UserRole, adminId: string, reason?: string): Promise<UserDocument> {
+        // Check if admin exists and has permission
+        const admin = await this.userService.findById(adminId);
+        if (!admin) {
+            throw new NotFoundException('Admin not found');
+        }
+
+        if (![UserRole.ADMIN, UserRole.SUPER_ADMIN].includes(admin.role)) {
+            throw new ForbiddenException('Only admins can change user roles');
+        }
+
+        // Check if target user exists
+        const targetUser = await this.userService.findById(userId);
+        if (!targetUser) {
+            throw new NotFoundException('User not found');
+        }
+
+        // Prevent changing super admin role
+        if (targetUser.role === UserRole.SUPER_ADMIN && admin.role !== UserRole.SUPER_ADMIN) {
+            throw new ForbiddenException('Cannot change super admin role');
+        }
+
+        // Prevent promoting to super admin unless current user is super admin
+        if (newRole === UserRole.SUPER_ADMIN && admin.role !== UserRole.SUPER_ADMIN) {
+            throw new ForbiddenException('Only super admins can promote users to super admin');
+        }
+
+        // Update user role
+        const updatedUser = await this.userService.update(userId, { role: newRole });
+
+        // Log the role change (you might want to add this to a log table)
+        console.log(`Role changed: User ${targetUser.username} (${targetUser.email}) role changed from ${targetUser.role} to ${newRole} by admin ${admin.username}. Reason: ${reason || 'No reason provided'}`);
+
+        return updatedUser;
+    }
+
+    // Password Management
+    async changePassword(userId: string, currentPassword: string, newPassword: string, confirmPassword: string): Promise<{ message: string }> {
+        // Validate password confirmation
+        if (newPassword !== confirmPassword) {
+            throw new BadRequestException('New password and confirmation do not match');
+        }
+
+        // Get user
+        const user = await this.userService.findById(userId);
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        // Check if user has a password (not OAuth user)
+        if (!user.password) {
+            throw new BadRequestException('OAuth users cannot change password through this method');
+        }
+
+        // Verify current password
+        const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+        if (!isCurrentPasswordValid) {
+            throw new BadRequestException('Current password is incorrect');
+        }
+
+        // Hash new password
+        const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+
+        // Update password
+        await this.userService.update(userId, { password: hashedNewPassword });
+
+        return { message: 'Password changed successfully' };
+    }
+
+    async adminChangePassword(userId: string, newPassword: string, adminId: string, reason?: string): Promise<{ message: string }> {
+        // Check if admin exists and has permission
+        const admin = await this.userService.findById(adminId);
+        if (!admin) {
+            throw new NotFoundException('Admin not found');
+        }
+
+        if (![UserRole.ADMIN, UserRole.SUPER_ADMIN].includes(admin.role)) {
+            throw new ForbiddenException('Only admins can change user passwords');
+        }
+
+        // Check if target user exists
+        const targetUser = await this.userService.findById(userId);
+        if (!targetUser) {
+            throw new NotFoundException('User not found');
+        }
+
+        // Hash new password
+        const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+
+        // Update password
+        await this.userService.update(userId, { password: hashedNewPassword });
+
+        // Log the password change
+        console.log(`Password changed: Admin ${admin.username} changed password for user ${targetUser.username} (${targetUser.email}). Reason: ${reason || 'No reason provided'}`);
+
+        return { message: 'Password changed successfully by admin' };
+    }
+
+    // User Management
+    async getUserRoles(): Promise<{ role: UserRole; count: number }[]> {
+        const roleCounts = await this.userModel.aggregate([
+            { $group: { _id: '$role', count: { $sum: 1 } } },
+            { $sort: { _id: 1 } }
+        ]);
+
+        return roleCounts.map(item => ({
+            role: item._id,
+            count: item.count
+        }));
+    }
+
+    async getUsersByRole(role: UserRole, page: number = 1, limit: number = 20): Promise<{
+        items: UserDocument[];
+        totalItems: number;
+        page: number;
+        limit: number;
+    }> {
+        const filter = { role };
+        const skip = Math.max(0, (Number(page) - 1) * Number(limit));
+        const take = Math.max(1, Math.min(Number(limit), 100));
+
+        const [items, totalItems] = await Promise.all([
+            this.userModel.find(filter)
+                .select('-password -hash -hashExpires')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(take)
+                .exec(),
+            this.userModel.countDocuments(filter),
+        ]);
+
+        return { items, totalItems, page: Number(page), limit: take };
     }
 } 

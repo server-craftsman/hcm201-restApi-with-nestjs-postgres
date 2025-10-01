@@ -21,6 +21,6 @@ import { User, UserSchema } from '../database/schemas/user.schema';
     ],
     controllers: [DebateController],
     providers: [DebateService, DebateGateway],
-    exports: [DebateService],
+    exports: [DebateService, MongooseModule],
 })
 export class DebateModule { }
