@@ -10,7 +10,6 @@ export class GoogleAuthDto {
     })
     @IsOptional()
     @IsString()
-    @IsNotEmpty()
     idToken?: string;
 
     @ApiProperty({
