@@ -203,7 +203,10 @@ export class DebateService {
             limit?: number;
             sort?: string;
         },
-    ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
+    ): Promise<
+        | { items: ArgumentDocument[]; totalItems: number; page: number; limit: number }
+        | { support: { items: ArgumentDocument[]; totalItems: number; page: number; limit: number }, oppose: { items: ArgumentDocument[]; totalItems: number; page: number; limit: number } }
+    > {
         const page = Number(query?.page ?? 1);
         const limit = Math.max(1, Math.min(Number(query?.limit ?? 20), 100));
         const skip = Math.max(0, (page - 1) * limit);
@@ -269,7 +272,7 @@ export class DebateService {
 
         const threads = await this.debateThreadModel
             .find(threadFilter)
-            .select('_id')
+            .select('_id modForSideA modForSideB moderators')
             .lean();
 
         if (!threads.length) {
@@ -278,10 +281,141 @@ export class DebateService {
 
         const threadIds = threads.map((t: any) => t._id);
 
-        const moderatorFilter = {
-            ...baseFilter,
-            threadId: { $in: threadIds },
-        } as any;
+        // Build side-aware filter so a moderator only sees arguments of their assigned side
+        // - If moderator is modForSideA on a thread => can moderate SUPPORT arguments there
+        // - If moderator is modForSideB on a thread => can moderate OPPOSE arguments there
+        // - If moderator is in moderators array => can see both sides for that thread
+        const sideAThreadIds: any[] = [];
+        const sideBThreadIds: any[] = [];
+        const generalThreadIds: any[] = [];
+
+        for (const t of threads as any[]) {
+            const isGeneral = Array.isArray(t.moderators) && (modObjectId
+                ? t.moderators.some((m: any) => String(m) === String(modObjectId))
+                : t.moderators.includes(moderatorId));
+            const isSideA = t.modForSideA && String(t.modForSideA) === String(modObjectId ?? moderatorId);
+            const isSideB = t.modForSideB && String(t.modForSideB) === String(modObjectId ?? moderatorId);
+
+            if (isGeneral) {
+                generalThreadIds.push(t._id);
+            }
+            if (isSideA) {
+                sideAThreadIds.push(t._id);
+            }
+            if (isSideB) {
+                sideBThreadIds.push(t._id);
+            }
+        }
+
+        // If client specifies a threadId explicitly, still enforce side rules for that thread
+        // but allow both sides if the moderator is a general moderator on it.
+        let sideAwareOr: any[] = [];
+        if (baseFilter.threadId) {
+            const specificId = baseFilter.threadId;
+            const isGeneral = generalThreadIds.some(id => String(id) === String(specificId));
+            const isA = sideAThreadIds.some(id => String(id) === String(specificId));
+            const isB = sideBThreadIds.some(id => String(id) === String(specificId));
+
+            // If argumentType already specified, just keep it but ensure access is allowed
+            if (baseFilter.argumentType) {
+                const type = baseFilter.argumentType;
+                const allowed = isGeneral || (isA && String(type) === String(ArgumentType.SUPPORT)) || (isB && String(type) === String(ArgumentType.OPPOSE));
+                if (!allowed) {
+                    return { items: [], totalItems: 0, page, limit };
+                }
+                sideAwareOr = [{ threadId: specificId, argumentType: type }];
+            } else {
+                const ors: any[] = [];
+                if (isGeneral) {
+                    ors.push({ threadId: specificId });
+                }
+                if (isA) {
+                    ors.push({ threadId: specificId, argumentType: ArgumentType.SUPPORT });
+                }
+                if (isB) {
+                    ors.push({ threadId: specificId, argumentType: ArgumentType.OPPOSE });
+                }
+                if (!ors.length) {
+                    return { items: [], totalItems: 0, page, limit };
+                }
+                sideAwareOr = ors;
+            }
+        } else {
+            // No specific threadId: build OR across all assigned threads according to side
+            const ors: any[] = [];
+            if (generalThreadIds.length) {
+                ors.push({ threadId: { $in: generalThreadIds } });
+            }
+            if (sideAThreadIds.length) {
+                ors.push({ threadId: { $in: sideAThreadIds }, argumentType: ArgumentType.SUPPORT });
+            }
+            if (sideBThreadIds.length) {
+                ors.push({ threadId: { $in: sideBThreadIds }, argumentType: ArgumentType.OPPOSE });
+            }
+            if (!ors.length) {
+                return { items: [], totalItems: 0, page, limit };
+            }
+            // If client specified argumentType globally, intersect with OR rules
+            if (baseFilter.argumentType) {
+                const type = baseFilter.argumentType;
+                sideAwareOr = ors.map(rule => ({ ...rule, argumentType: rule.argumentType ?? type }));
+            } else {
+                sideAwareOr = ors;
+            }
+        }
+
+        const moderatorFilter: any = { ...baseFilter };
+        delete moderatorFilter.threadId; // handled in sideAwareOr
+        // When sideAwareOr contains simple {threadId} clauses and the baseFilter has argumentType, those will be added above
+        moderatorFilter.$or = sideAwareOr;
+
+        // If grouping is requested, run two queries with side constraints
+        if ((query as any)?.groupBySide) {
+            // Build per-side filters
+            const supportFilter = { ...moderatorFilter } as any;
+            const opposeFilter = { ...moderatorFilter } as any;
+
+            // Force argumentType per side, but do not overwrite when already constrained in each OR rule
+            // We will append type only where not already specified
+            const appendTypeToOr = (rules: any[], type: ArgumentType) =>
+                rules.map(r => (r.argumentType ? r : { ...r, argumentType: type }));
+
+            if (Array.isArray(supportFilter.$or)) {
+                supportFilter.$or = appendTypeToOr(supportFilter.$or, ArgumentType.SUPPORT);
+            } else {
+                supportFilter.argumentType = ArgumentType.SUPPORT;
+            }
+
+            if (Array.isArray(opposeFilter.$or)) {
+                opposeFilter.$or = appendTypeToOr(opposeFilter.$or, ArgumentType.OPPOSE);
+            } else {
+                opposeFilter.argumentType = ArgumentType.OPPOSE;
+            }
+
+            const [supportItems, supportTotal, opposeItems, opposeTotal] = await Promise.all([
+                this.argumentModel.find(supportFilter)
+                    .populate('authorId', 'username email firstName lastName avatar')
+                    .populate('moderatedBy', 'username email firstName lastName avatar')
+                    .sort(sort)
+                    .skip(skip)
+                    .limit(limit)
+                    .exec(),
+                this.argumentModel.countDocuments(supportFilter),
+                this.argumentModel.find(opposeFilter)
+                    .populate('authorId', 'username email firstName lastName avatar')
+                    .populate('moderatedBy', 'username email firstName lastName avatar')
+                    .sort(sort)
+                    .skip(skip)
+                    .limit(limit)
+                    .exec(),
+                this.argumentModel.countDocuments(opposeFilter),
+            ]);
+
+            return {
+                support: { items: supportItems, totalItems: supportTotal, page, limit },
+                oppose: { items: opposeItems, totalItems: opposeTotal, page, limit },
+            };
+        }
 
         const [items, totalItems] = await Promise.all([
             this.argumentModel
@@ -471,6 +605,55 @@ export class DebateService {
         return savedVote;
     }
 
+    async updateVote(userId: string, data: { threadId: string; voteType: VoteType }): Promise<VoteDocument> {
+        // Validate required fields
+        if (!userId || !data.threadId || !data.voteType) {
+            throw new BadRequestException('userId, threadId, and voteType are required');
+        }
+
+        // Check if user exists
+        const user = await this.userModel.findById(userId);
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        // Check if thread exists and is active
+        const thread = await this.debateThreadModel.findById(data.threadId);
+        if (!thread) {
+            throw new NotFoundException('Debate thread not found');
+        }
+
+        if (thread.status !== ThreadStatus.ACTIVE) {
+            throw new BadRequestException('Thread is not active for voting');
+        }
+
+        if (!thread.allowVoting) {
+            throw new BadRequestException('Voting is not allowed for this thread');
+        }
+
+        // Normalize ids to ObjectId
+        const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : undefined;
+        const threadObjectId = Types.ObjectId.isValid(data.threadId) ? new Types.ObjectId(data.threadId) : undefined;
+        if (!userObjectId || !threadObjectId) {
+            throw new BadRequestException('Invalid userId or threadId');
+        }
+
+        // Find existing vote
+        const existingVote = await this.voteModel.findOne({
+            userId: userObjectId,
+            threadId: threadObjectId,
+        });
+
+        if (!existingVote) {
+            throw new NotFoundException('No existing vote found to update. Please create a vote first.');
+        }
+
+        // Update existing vote
+        existingVote.voteType = data.voteType;
+        existingVote.votedAt = new Date();
+        return await existingVote.save();
+    }
+
     async getUserVote(userId: string, threadId: string): Promise<VoteDocument | null> {
         const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : (userId as any);
         const threadObjectId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
@@ -616,6 +799,7 @@ export class DebateService {
         status?: ArgumentStatus,
         page: number = 1,
         limit: number = 20,
+        userId?: string,
     ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
         const normalizedThreadId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
         const filter: any = { threadId: normalizedThreadId };
@@ -637,10 +821,43 @@ export class DebateService {
             this.argumentModel.countDocuments(filter),
         ]);
 
+        // Thêm thông tin vote của user cho từng argument nếu userId được cung cấp
+        if (userId) {
+            const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : userId;
+
+            // Lấy thông tin vote của user cho thread này
+            const userVote = await this.voteModel.findOne({
+                userId: userObjectId,
+                threadId: normalizedThreadId,
+            }).lean();
+
+            // Thêm thông tin like/dislike của user cho từng argument
+            const itemsWithUserVotes = await Promise.all(
+                items.map(async (item) => {
+                    const itemObj = item.toObject();
+
+                    // Kiểm tra xem user đã like/dislike argument này chưa
+                    const hasLiked = item.upvotedBy?.some(id => id.toString() === userObjectId.toString()) || false;
+                    const hasDisliked = item.downvotedBy?.some(id => id.toString() === userObjectId.toString()) || false;
+
+                    return {
+                        ...itemObj,
+                        userVote: {
+                            threadVote: userVote?.voteType || null, // Vote của user cho thread
+                            hasLiked, // User đã like argument này chưa
+                            hasDisliked, // User đã dislike argument này chưa
+                        }
+                    };
+                })
+            );
+
+            return { items: itemsWithUserVotes as any, totalItems, page: Number(page), limit: take };
+        }
+
         return { items, totalItems, page: Number(page), limit: take };
     }
 
-    async getArgument(id: string): Promise<ArgumentDocument> {
+    async getArgument(id: string, userId?: string): Promise<any> {
         const argument = await this.argumentModel.findById(id)
             .populate('authorId', 'username email firstName lastName avatar')
             .populate('moderatedBy', 'username email firstName lastName avatar')
@@ -654,6 +871,31 @@ export class DebateService {
 
         // Increment view count
         await this.argumentModel.findByIdAndUpdate(id, { $inc: { viewCount: 1 } });
+
+        // Nếu có userId, trả thêm thông tin user đã like/dislike argument và vote của user cho thread
+        if (userId) {
+            const userObjectId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : (userId as any);
+            const threadObjId = Types.ObjectId.isValid((argument as any).threadId?._id || (argument as any).threadId)
+                ? new Types.ObjectId((argument as any).threadId?._id || (argument as any).threadId)
+                : (argument as any).threadId;
+
+            // Lấy vote của user trên thread
+            const userVote = await this.voteModel.findOne({ userId: userObjectId, threadId: threadObjId }).lean();
+
+            // Kiểm tra like/dislike
+            const hasLiked = (argument as any).upvotedBy?.some((id: any) => id.toString() === userObjectId.toString()) || false;
+            const hasDisliked = (argument as any).downvotedBy?.some((id: any) => id.toString() === userObjectId.toString()) || false;
+
+            const argObj = (argument as any).toObject ? (argument as any).toObject() : argument;
+            return {
+                ...argObj,
+                userVote: {
+                    threadVote: userVote?.voteType || null,
+                    hasLiked,
+                    hasDisliked,
+                },
+            };
+        }
 
         return argument;
     }
@@ -1461,5 +1703,116 @@ export class DebateService {
             pendingCount,
             moderationRate: isNaN(moderationRate) ? 0 : moderationRate,
         };
+    }
+
+    // Get arguments from threads assigned to moderator
+    async getAssignedThreadArguments(
+        moderatorId: string,
+        isAdmin: boolean = false,
+        query?: {
+            status?: ArgumentStatus;
+            argumentType?: ArgumentType;
+            threadId?: string;
+            search?: string;
+            page?: number;
+            limit?: number;
+            sort?: string;
+            includeThread?: boolean;
+        },
+    ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
+        const page = Number(query?.page) || 1;
+        const limit = Math.min(Number(query?.limit) || 20, 100);
+        const skip = Math.max(0, (page - 1) * limit);
+
+        // Parse sort parameter
+        let sort: any = { createdAt: -1 }; // Default sort
+        if (query?.sort) {
+            const [field, order] = query.sort.split(':');
+            sort = { [field]: parseInt(order) || -1 };
+        }
+
+        // Base filter for arguments
+        const baseFilter: any = {};
+        if (query?.status) {
+            baseFilter.status = query.status;
+        }
+        if (query?.argumentType) {
+            baseFilter.argumentType = query.argumentType;
+        }
+        if (query?.search) {
+            baseFilter.$or = [
+                { title: { $regex: query.search, $options: 'i' } },
+                { content: { $regex: query.search, $options: 'i' } },
+            ];
+        }
+
+        // If specific threadId is provided, filter by that
+        if (query?.threadId) {
+            baseFilter.threadId = Types.ObjectId.isValid(query.threadId)
+                ? new Types.ObjectId(query.threadId)
+                : query.threadId;
+        } else {
+            // Get threads assigned to this moderator
+            const modObjectId = Types.ObjectId.isValid(moderatorId)
+                ? new Types.ObjectId(moderatorId)
+                : undefined;
+
+            const threadFilter: any = modObjectId
+                ? {
+                    $or: [
+                        { modForSideA: modObjectId },
+                        { modForSideB: modObjectId },
+                        { moderators: modObjectId },
+                        ...(isAdmin ? [{ createdBy: modObjectId }] : []),
+                    ],
+                }
+                : {
+                    $or: [
+                        { modForSideA: moderatorId },
+                        { modForSideB: moderatorId },
+                        { moderators: { $in: [moderatorId] } },
+                        ...(isAdmin ? [{ createdBy: moderatorId }] : []),
+                    ],
+                };
+
+            const threads = await this.debateThreadModel
+                .find(threadFilter)
+                .select('_id')
+                .lean();
+
+            if (!threads.length) {
+                return { items: [], totalItems: 0, page, limit };
+            }
+
+            const threadIds = threads.map((t: any) => t._id);
+            baseFilter.threadId = { $in: threadIds };
+        }
+
+        // Execute query
+        const populateOptions = [
+            { path: 'authorId', select: 'username email firstName lastName avatar' },
+            { path: 'moderatedBy', select: 'username email firstName lastName avatar' },
+        ];
+
+        // Include thread details if requested
+        if (query?.includeThread) {
+            populateOptions.push({
+                path: 'threadId',
+                select: 'title description status moderators modForSideA modForSideB createdBy requireModeration'
+            } as any);
+        }
+
+        const [items, totalItems] = await Promise.all([
+            this.argumentModel
+                .find(baseFilter)
+                .populate(populateOptions)
+                .sort(sort)
+                .skip(skip)
+                .limit(limit)
+                .exec(),
+            this.argumentModel.countDocuments(baseFilter),
+        ]);
+
+        return { items, totalItems, page, limit };
     }
 }

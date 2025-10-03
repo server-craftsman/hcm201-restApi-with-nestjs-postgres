@@ -6,7 +6,7 @@ export class AppService {
   constructor(private readonly configService: ConfigService) { }
 
   getHello(): string {
-    return 'SmartChat API is running!';
+    return 'Server API is running!';
   }
 
   async getHealth() {
