@@ -36,7 +36,7 @@ const appConfig = registerAs('app', () => {
 
     // MongoDB Configuration
     mongodb: {
-      uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/debate-system',
+      uri: process.env.MONGODB_URI || '',
       options: {
         retryWrites: true,
         w: 'majority',

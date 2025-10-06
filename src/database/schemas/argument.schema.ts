@@ -71,6 +71,12 @@ export class Argument {
 
     @Prop()
     rejectionReason?: string;
+
+    @Prop()
+    source?: string;
+
+    @Prop({ type: [String] })
+    evidenceUrls?: string[];
 }
 
 export const ArgumentSchema = SchemaFactory.createForClass(Argument);

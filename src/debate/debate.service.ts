@@ -46,6 +46,8 @@ export interface CreateArgumentDto {
     authorId: string;
     threadId: string;
     argumentType?: ArgumentType;
+    source?: string;
+    evidenceUrls?: string[];
 }
 
 export interface ModerateArgumentDto {
@@ -290,20 +292,21 @@ export class DebateService {
         const generalThreadIds: any[] = [];
 
         for (const t of threads as any[]) {
+            const isSideA = t.modForSideA && String(t.modForSideA) === String(modObjectId ?? moderatorId);
+            const isSideB = t.modForSideB && String(t.modForSideB) === String(modObjectId ?? moderatorId);
             const isGeneral = Array.isArray(t.moderators) && (modObjectId
                 ? t.moderators.some((m: any) => String(m) === String(modObjectId))
                 : t.moderators.includes(moderatorId));
-            const isSideA = t.modForSideA && String(t.modForSideA) === String(modObjectId ?? moderatorId);
-            const isSideB = t.modForSideB && String(t.modForSideB) === String(modObjectId ?? moderatorId);
 
-            if (isGeneral) {
-                generalThreadIds.push(t._id);
-            }
+            // Priority: side-specific assignments override general moderator role
+            // If assigned as modForSideA or modForSideB, they must respect that side only
             if (isSideA) {
                 sideAThreadIds.push(t._id);
-            }
-            if (isSideB) {
+            } else if (isSideB) {
                 sideBThreadIds.push(t._id);
+            } else if (isGeneral) {
+                // Only add to general if NOT side-specific
+                generalThreadIds.push(t._id);
             }
         }
 
@@ -371,25 +374,45 @@ export class DebateService {
 
         // If grouping is requested, run two queries with side constraints
         if ((query as any)?.groupBySide) {
-            // Build per-side filters
-            const supportFilter = { ...moderatorFilter } as any;
-            const opposeFilter = { ...moderatorFilter } as any;
+            // Build per-side filters respecting moderator's side assignment
+            // Filter sideAwareOr to separate SUPPORT and OPPOSE rules
+            const supportRules = sideAwareOr.filter((rule: any) => {
+                // Include rules that are for SUPPORT or don't specify argumentType (general moderator threads)
+                return !rule.argumentType || rule.argumentType === ArgumentType.SUPPORT;
+            });
 
-            // Force argumentType per side, but do not overwrite when already constrained in each OR rule
-            // We will append type only where not already specified
-            const appendTypeToOr = (rules: any[], type: ArgumentType) =>
-                rules.map(r => (r.argumentType ? r : { ...r, argumentType: type }));
+            const opposeRules = sideAwareOr.filter((rule: any) => {
+                // Include rules that are for OPPOSE or don't specify argumentType (general moderator threads)
+                return !rule.argumentType || rule.argumentType === ArgumentType.OPPOSE;
+            });
 
-            if (Array.isArray(supportFilter.$or)) {
-                supportFilter.$or = appendTypeToOr(supportFilter.$or, ArgumentType.SUPPORT);
+            // Build filters
+            const supportFilter: any = { ...baseFilter };
+            delete supportFilter.threadId;
+            delete supportFilter.argumentType;
+            if (supportRules.length > 0) {
+                // Ensure all rules have argumentType SUPPORT
+                supportFilter.$or = supportRules.map((rule: any) => ({
+                    ...rule,
+                    argumentType: ArgumentType.SUPPORT
+                }));
             } else {
-                supportFilter.argumentType = ArgumentType.SUPPORT;
+                // No access to SUPPORT arguments - use impossible condition
+                supportFilter._id = { $in: [] }; // Will return empty
             }
 
-            if (Array.isArray(opposeFilter.$or)) {
-                opposeFilter.$or = appendTypeToOr(opposeFilter.$or, ArgumentType.OPPOSE);
+            const opposeFilter: any = { ...baseFilter };
+            delete opposeFilter.threadId;
+            delete opposeFilter.argumentType;
+            if (opposeRules.length > 0) {
+                // Ensure all rules have argumentType OPPOSE
+                opposeFilter.$or = opposeRules.map((rule: any) => ({
+                    ...rule,
+                    argumentType: ArgumentType.OPPOSE
+                }));
             } else {
-                opposeFilter.argumentType = ArgumentType.OPPOSE;
+                // No access to OPPOSE arguments - use impossible condition
+                opposeFilter._id = { $in: [] }; // Will return empty
             }
 
             const [supportItems, supportTotal, opposeItems, opposeTotal] = await Promise.all([
@@ -773,6 +796,8 @@ export class DebateService {
             threadId: threadObjectId,
             argumentType: computedArgumentType,
             status: thread.requireModeration ? ArgumentStatus.PENDING : ArgumentStatus.APPROVED,
+            source: data.source,
+            evidenceUrls: data.evidenceUrls,
         });
 
         const savedArgument = await argument.save();
@@ -1029,11 +1054,36 @@ export class DebateService {
             throw new NotFoundException('Thread not found');
         }
 
-        const isModerator = thread.moderators.some(modId => modId.toString() === data.moderatorId);
-        const isCreator = thread.createdBy.toString() === data.moderatorId;
+        const modObjectId = Types.ObjectId.isValid(data.moderatorId) ? new Types.ObjectId(data.moderatorId) : data.moderatorId;
+        const isModerator = thread.moderators.some(modId => modId.toString() === String(modObjectId));
+        const isCreator = thread.createdBy.toString() === String(modObjectId);
+        const isModForSideA = thread.modForSideA && thread.modForSideA.toString() === String(modObjectId);
+        const isModForSideB = thread.modForSideB && thread.modForSideB.toString() === String(modObjectId);
 
-        if (![UserRole.ADMIN, UserRole.MODERATOR].includes(moderator.role) && !isModerator && !isCreator) {
-            throw new ForbiddenException('You don\'t have permission to moderate this thread');
+        // Admin can moderate any argument
+        if (moderator.role === UserRole.ADMIN) {
+            // Admins have full access
+        } else {
+            // Moderators must be assigned to this thread
+            if (!isModerator && !isCreator && !isModForSideA && !isModForSideB) {
+                throw new ForbiddenException('You don\'t have permission to moderate this thread');
+            }
+
+            // Check side-specific permissions
+            // modForSideA can only moderate SUPPORT arguments (prioritize side-specific role)
+            // modForSideB can only moderate OPPOSE arguments (prioritize side-specific role)
+            // If assigned as modForSideA or modForSideB, they MUST respect that side restriction
+            // even if they are also in the general moderators array
+            if (isModForSideA) {
+                if (argument.argumentType !== ArgumentType.SUPPORT) {
+                    throw new ForbiddenException('You are assigned to moderate SUPPORT arguments only');
+                }
+            } else if (isModForSideB) {
+                if (argument.argumentType !== ArgumentType.OPPOSE) {
+                    throw new ForbiddenException('You are assigned to moderate OPPOSE arguments only');
+                }
+            }
+            // If they are ONLY in the moderators array (not modForSideA/B), they can moderate both sides
         }
 
         // Update argument based on action
@@ -1624,21 +1674,62 @@ export class DebateService {
         page: number = 1,
         limit: number = 20,
     ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
-        // Get threads assigned to this moderator
+        const modObjectId = Types.ObjectId.isValid(moderatorId)
+            ? new Types.ObjectId(moderatorId)
+            : undefined;
+
+        // Get threads assigned to this moderator with side information
         const assignedThreads = await this.debateThreadModel.find({
             $or: [
-                { moderators: new Types.ObjectId(moderatorId) },
-                { modForSideA: new Types.ObjectId(moderatorId) },
-                { modForSideB: new Types.ObjectId(moderatorId) }
+                { moderators: modObjectId || moderatorId },
+                { modForSideA: modObjectId || moderatorId },
+                { modForSideB: modObjectId || moderatorId }
             ]
-        }).select('_id').exec();
+        }).select('_id modForSideA modForSideB moderators').lean();
 
-        const threadIds = assignedThreads.map(thread => thread._id);
+        if (!assignedThreads.length) {
+            return { items: [], totalItems: 0, page: Number(page), limit: Number(limit) };
+        }
 
-        const filter = {
-            threadId: { $in: threadIds },
-            status: ArgumentStatus.PENDING // This method specifically gets pending arguments
-        };
+        // Build side-aware filter
+        const sideAThreadIds: any[] = [];
+        const sideBThreadIds: any[] = [];
+        const generalThreadIds: any[] = [];
+
+        for (const t of assignedThreads as any[]) {
+            const isSideA = t.modForSideA && String(t.modForSideA) === String(modObjectId ?? moderatorId);
+            const isSideB = t.modForSideB && String(t.modForSideB) === String(modObjectId ?? moderatorId);
+            const isGeneral = Array.isArray(t.moderators) && (modObjectId
+                ? t.moderators.some((m: any) => String(m) === String(modObjectId))
+                : t.moderators.includes(moderatorId));
+
+            // Priority: side-specific assignments override general moderator role
+            if (isSideA) {
+                sideAThreadIds.push(t._id);
+            } else if (isSideB) {
+                sideBThreadIds.push(t._id);
+            } else if (isGeneral) {
+                generalThreadIds.push(t._id);
+            }
+        }
+
+        // Build OR conditions for side-specific filtering
+        const sideAwareOr: any[] = [];
+        if (generalThreadIds.length) {
+            sideAwareOr.push({ threadId: { $in: generalThreadIds }, status: ArgumentStatus.PENDING });
+        }
+        if (sideAThreadIds.length) {
+            sideAwareOr.push({ threadId: { $in: sideAThreadIds }, argumentType: ArgumentType.SUPPORT, status: ArgumentStatus.PENDING });
+        }
+        if (sideBThreadIds.length) {
+            sideAwareOr.push({ threadId: { $in: sideBThreadIds }, argumentType: ArgumentType.OPPOSE, status: ArgumentStatus.PENDING });
+        }
+
+        if (!sideAwareOr.length) {
+            return { items: [], totalItems: 0, page: Number(page), limit: Number(limit) };
+        }
+
+        const filter = { $or: sideAwareOr };
 
         const skip = Math.max(0, (Number(page) - 1) * Number(limit));
         const take = Math.max(1, Math.min(Number(limit), 100));
