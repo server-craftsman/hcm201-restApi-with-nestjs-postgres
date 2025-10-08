@@ -946,18 +946,40 @@ export class DebateService {
             isUserString: userRole === 'user',
             isUserLower: userRole === 'user',
             isGuest: userRole === undefined,
+            isModerator: userRole === UserRole.MODERATOR || userRole === 'MODERATOR' || userRole === 'moderator',
+            isAdmin: userRole === UserRole.ADMIN || userRole === 'ADMIN' || userRole === 'admin',
             UserRoleEnum: UserRole.USER,
+            UserRoleModerator: UserRole.MODERATOR,
+            UserRoleAdmin: UserRole.ADMIN,
             isUserRoleEnum: userRole === UserRole.USER,
             allUserRoleChecks: {
                 'USER': userRole === 'USER',
                 'user': userRole === 'user',
                 'UserRole.USER': userRole === UserRole.USER,
+                'MODERATOR': userRole === 'MODERATOR',
+                'moderator': userRole === 'moderator',
+                'UserRole.MODERATOR': userRole === UserRole.MODERATOR,
+                'ADMIN': userRole === 'ADMIN',
+                'admin': userRole === 'admin',
+                'UserRole.ADMIN': userRole === UserRole.ADMIN,
                 'undefined (guest)': userRole === undefined
             }
         });
 
         // Role-based filtering: USER and GUEST (undefined) cannot see PENDING arguments
-        if (userRole === UserRole.USER || userRole === 'USER' || userRole === 'user' || userRole === undefined) {
+        const isUserOrGuest = userRole === UserRole.USER || userRole === 'USER' || userRole === 'user' || userRole === undefined;
+        const isModeratorOrAdmin = userRole === UserRole.MODERATOR || userRole === 'MODERATOR' || userRole === 'moderator' ||
+            userRole === UserRole.ADMIN || userRole === 'ADMIN' || userRole === 'admin';
+
+        console.log('🔍 Role Filtering Logic:', {
+            userRole,
+            isUserOrGuest,
+            isModeratorOrAdmin,
+            willExcludePending: isUserOrGuest,
+            willAllowPending: isModeratorOrAdmin
+        });
+
+        if (isUserOrGuest) {
             // USER role: exclude PENDING arguments
             filter.status = { $ne: ArgumentStatus.PENDING };
             if (status) {
