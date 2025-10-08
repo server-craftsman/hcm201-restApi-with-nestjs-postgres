@@ -966,21 +966,35 @@ export class DebateService {
             }
         });
 
-        // Role-based filtering: USER and GUEST (undefined) cannot see PENDING arguments
-        const isUserOrGuest = userRole === UserRole.USER || userRole === 'USER' || userRole === 'user' || userRole === undefined;
+        // Role-based filtering logic
+        const isGuest = userRole === undefined;
+        const isUser = userRole === UserRole.USER || userRole === 'USER' || userRole === 'user';
         const isModeratorOrAdmin = userRole === UserRole.MODERATOR || userRole === 'MODERATOR' || userRole === 'moderator' ||
             userRole === UserRole.ADMIN || userRole === 'ADMIN' || userRole === 'admin';
 
         console.log('🔍 Role Filtering Logic:', {
             userRole,
-            isUserOrGuest,
+            isGuest,
+            isUser,
             isModeratorOrAdmin,
-            willExcludePending: isUserOrGuest,
+            willExcludePending: isGuest || isUser,
             willAllowPending: isModeratorOrAdmin
         });
 
-        if (isUserOrGuest) {
-            // USER role: exclude PENDING arguments
+        if (isGuest) {
+            // GUEST: can only see APPROVED arguments (default behavior)
+            if (!status) {
+                // If no specific status requested, show only APPROVED
+                filter.status = ArgumentStatus.APPROVED;
+            } else if (status === ArgumentStatus.APPROVED) {
+                // If explicitly requesting APPROVED, allow it
+                filter.status = ArgumentStatus.APPROVED;
+            } else {
+                // If requesting other statuses (PENDING, REJECTED), return empty
+                return { items: [], totalItems: 0, page: Number(page), limit: Math.max(1, Math.min(Number(limit), 100)) };
+            }
+        } else if (isUser) {
+            // USER: exclude PENDING arguments
             filter.status = { $ne: ArgumentStatus.PENDING };
             if (status) {
                 // If specific status is requested, still respect it but exclude PENDING
@@ -991,7 +1005,7 @@ export class DebateService {
                     return { items: [], totalItems: 0, page: Number(page), limit: Math.max(1, Math.min(Number(limit), 100)) };
                 }
             }
-        } else {
+        } else if (isModeratorOrAdmin) {
             // MODERATOR/ADMIN: can see all arguments including PENDING
             if (status) {
                 filter.status = status;
