@@ -932,15 +932,63 @@ export class DebateService {
         page: number = 1,
         limit: number = 20,
         userId?: string,
+        userRole?: string,
     ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
         const normalizedThreadId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
         const filter: any = { threadId: normalizedThreadId };
-        if (status) {
-            filter.status = status;
+
+        // Debug log for user role
+        console.log('🔍 User Role Debug:', {
+            userRole,
+            userRoleType: typeof userRole,
+            isUser: userRole === 'USER',
+            isUserString: userRole === 'user',
+            isUserLower: userRole === 'user',
+            isGuest: userRole === undefined,
+            UserRoleEnum: UserRole.USER,
+            isUserRoleEnum: userRole === UserRole.USER,
+            allUserRoleChecks: {
+                'USER': userRole === 'USER',
+                'user': userRole === 'user',
+                'UserRole.USER': userRole === UserRole.USER,
+                'undefined (guest)': userRole === undefined
+            }
+        });
+
+        // Role-based filtering: USER and GUEST (undefined) cannot see PENDING arguments
+        if (userRole === UserRole.USER || userRole === 'USER' || userRole === 'user' || userRole === undefined) {
+            // USER role: exclude PENDING arguments
+            filter.status = { $ne: ArgumentStatus.PENDING };
+            if (status) {
+                // If specific status is requested, still respect it but exclude PENDING
+                if (status !== ArgumentStatus.PENDING) {
+                    filter.status = status;
+                } else {
+                    // If USER requests PENDING, return empty (they can't see it)
+                    return { items: [], totalItems: 0, page: Number(page), limit: Math.max(1, Math.min(Number(limit), 100)) };
+                }
+            }
+        } else {
+            // MODERATOR/ADMIN: can see all arguments including PENDING
+            if (status) {
+                filter.status = status;
+            }
         }
 
         const skip = Math.max(0, (Number(page) - 1) * Number(limit));
         const take = Math.max(1, Math.min(Number(limit), 100));
+
+        // Debug log for role-based filtering
+        console.log('🔍 getArguments Filter Debug:', {
+            threadId,
+            userRole,
+            status,
+            filter: JSON.stringify(filter, null, 2),
+            filterStatus: filter.status,
+            isUserRole: userRole === UserRole.USER || userRole === 'USER' || userRole === 'user',
+            isGuest: userRole === undefined,
+            willExcludePending: userRole === UserRole.USER || userRole === 'USER' || userRole === 'user' || userRole === undefined
+        });
 
         const [items, totalItems] = await Promise.all([
             this.argumentModel.find(filter)
@@ -952,6 +1000,17 @@ export class DebateService {
                 .exec(),
             this.argumentModel.countDocuments(filter),
         ]);
+
+        // Debug log for query results
+        console.log('🔍 Query Results Debug:', {
+            itemsFound: items.length,
+            totalItems,
+            itemsStatuses: items.map(item => ({
+                id: item._id,
+                status: item.status,
+                argumentType: item.argumentType
+            }))
+        });
 
         // Thêm thông tin vote của user cho từng argument nếu userId được cung cấp
         if (userId) {
