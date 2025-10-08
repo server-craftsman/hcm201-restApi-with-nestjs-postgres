@@ -627,14 +627,62 @@ export class DebateService {
         const skip = Math.max(0, (Number(page) - 1) * Number(limit));
         const take = Math.max(1, Math.min(Number(limit), 100));
 
+        // Enhanced sorting logic
         const sort: any = (() => {
-            if (!options?.sort) return { createdAt: -1 };
-            const [field, dir] = String(options.sort).split(':');
-            const direction = Number(dir) === 1 || String(dir) === 'asc' ? 1 : -1;
-            return { [field]: direction };
+            if (!options?.sort) return { createdAt: -1 }; // Default: newest first
+
+            const sortValue = String(options.sort).toLowerCase();
+
+            // Handle common sort options
+            switch (sortValue) {
+                case 'newest':
+                case 'createdat:-1':
+                case 'createdat:desc':
+                    return { createdAt: -1 };
+
+                case 'oldest':
+                case 'createdat:1':
+                case 'createdat:asc':
+                    return { createdAt: 1 };
+
+                case 'popular':
+                case 'most_votes':
+                case 'votes:-1':
+                case 'votes:desc':
+                    return { totalVotes: -1, createdAt: -1 }; // Most votes first, then newest
+
+                case 'most_arguments':
+                case 'arguments:-1':
+                case 'arguments:desc':
+                    return { totalArguments: -1, createdAt: -1 }; // Most arguments first, then newest
+
+                case 'most_views':
+                case 'views:-1':
+                case 'views:desc':
+                    return { viewCount: -1, createdAt: -1 }; // Most views first, then newest
+
+                case 'title':
+                case 'title:1':
+                case 'title:asc':
+                    return { title: 1 };
+
+                case 'title:-1':
+                case 'title:desc':
+                    return { title: -1 };
+
+                default:
+                    // Handle custom sort format: field:direction
+                    const [field, dir] = sortValue.split(':');
+                    if (field && dir) {
+                        const direction = Number(dir) === 1 || String(dir) === 'asc' ? 1 : -1;
+                        return { [field]: direction };
+                    }
+                    return { createdAt: -1 }; // Fallback to default
+            }
         })();
 
         console.log('🔍 getAllThreads filter:', JSON.stringify(filter, null, 2));
+        console.log('🔍 getAllThreads sort:', { sortOption: options?.sort, sortObject: sort });
 
         const [items, totalItems] = await Promise.all([
             this.debateThreadModel.find(filter)
