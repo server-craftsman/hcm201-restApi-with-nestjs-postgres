@@ -6,6 +6,8 @@ import { Vote, VoteDocument, VoteType } from '../database/schemas/vote.schema';
 import { Argument, ArgumentDocument, ArgumentStatus, ArgumentType } from '../database/schemas/argument.schema';
 import { ModerationLog, ModerationLogDocument, ModerationAction } from '../database/schemas/moderation-log.schema';
 import { User, UserDocument, UserRole } from '../database/schemas/user.schema';
+import { AIModeration, AIModerationDocument, ModerationStatus, RiskLevel } from '../database/schemas/ai-moderation.schema';
+import { AIModerationService } from './ai-moderation.service';
 
 export interface CreateThreadDto {
     title: string;
@@ -66,6 +68,8 @@ export class DebateService {
         @InjectModel(Argument.name) private argumentModel: Model<ArgumentDocument>,
         @InjectModel(ModerationLog.name) private moderationLogModel: Model<ModerationLogDocument>,
         @InjectModel(User.name) private userModel: Model<UserDocument>,
+        @InjectModel(AIModeration.name) private aiModerationModel: Model<AIModerationDocument>,
+        private aiModerationService: AIModerationService,
     ) { }
 
     // Thread Management
@@ -969,6 +973,14 @@ export class DebateService {
                 data.threadId,
                 { $inc: { totalApprovedArguments: 1 } }
             );
+        }
+
+        // 🤖 AI Auto-Moderation
+        try {
+            await this.performAIModeration(savedArgument);
+        } catch (error) {
+            console.error('AI moderation failed:', error);
+            // Continue with manual moderation if AI fails
         }
 
         return savedArgument;
@@ -2202,5 +2214,104 @@ export class DebateService {
         ]);
 
         return { items, totalItems, page, limit };
+    }
+
+    /**
+     * 🤖 Perform AI moderation on argument
+     */
+    async performAIModeration(argument: ArgumentDocument): Promise<void> {
+        try {
+            console.log(`🤖 Starting AI moderation for argument: ${argument._id}`);
+
+            // Analyze content with AI
+            const aiResult = await this.aiModerationService.analyzeContent(
+                argument.content,
+                argument.title
+            );
+
+            // Store AI moderation result
+            const aiModeration = new this.aiModerationModel({
+                argumentId: argument._id,
+                status: aiResult.isApproved ? ModerationStatus.APPROVED : ModerationStatus.REJECTED,
+                riskLevel: aiResult.riskLevel,
+                confidence: aiResult.confidence,
+                categories: aiResult.categories,
+                reasons: aiResult.reasons,
+                suggestions: aiResult.suggestions,
+                aiAnalysis: aiResult,
+                isAutoApproved: aiResult.isApproved,
+                requiresHumanReview: aiResult.riskLevel === RiskLevel.HIGH || aiResult.riskLevel === RiskLevel.CRITICAL,
+                aiModels: ['openai-gpt4', 'gemini-pro'],
+                metadata: {
+                    processingTime: Date.now(),
+                    apiCalls: 2,
+                    version: '1.0.0'
+                }
+            });
+
+            await aiModeration.save();
+
+            // Auto-approve or reject based on AI result
+            if (aiResult.isApproved && aiResult.riskLevel === RiskLevel.LOW) {
+                // Auto-approve low-risk content
+                await this.argumentModel.findByIdAndUpdate(argument._id, {
+                    status: ArgumentStatus.APPROVED,
+                    moderatedAt: new Date(),
+                    moderatedBy: null, // AI moderation
+                });
+
+                // Update thread stats
+                await this.debateThreadModel.findByIdAndUpdate(argument.threadId, {
+                    $inc: { totalApprovedArguments: 1 }
+                });
+
+                console.log(`✅ AI auto-approved argument: ${argument._id}`);
+            } else if (aiResult.riskLevel === RiskLevel.CRITICAL) {
+                // Auto-reject critical content
+                await this.argumentModel.findByIdAndUpdate(argument._id, {
+                    status: ArgumentStatus.REJECTED,
+                    moderatedAt: new Date(),
+                    moderatedBy: null, // AI moderation
+                });
+
+                console.log(`❌ AI auto-rejected argument: ${argument._id} - Risk: ${aiResult.riskLevel}`);
+            } else {
+                // Flag for manual review
+                await this.argumentModel.findByIdAndUpdate(argument._id, {
+                    status: ArgumentStatus.PENDING, // Keep pending for manual review
+                });
+
+                console.log(`⚠️ AI flagged argument for manual review: ${argument._id} - Risk: ${aiResult.riskLevel}`);
+            }
+
+        } catch (error) {
+            console.error(`❌ AI moderation failed for argument ${argument._id}:`, error);
+
+            // Log the failure but don't block the argument creation
+            const aiModeration = new this.aiModerationModel({
+                argumentId: argument._id,
+                status: ModerationStatus.MANUAL_REVIEW,
+                riskLevel: RiskLevel.HIGH,
+                confidence: 0,
+                categories: ['AI_FAILED'],
+                reasons: ['AI moderation service failed'],
+                aiAnalysis: {
+                    isApproved: false,
+                    confidence: 0,
+                    reasons: ['AI moderation service failed'],
+                    riskLevel: RiskLevel.HIGH,
+                    categories: ['AI_FAILED']
+                },
+                isAutoApproved: false,
+                requiresHumanReview: true,
+                aiModels: [],
+                metadata: {
+                    error: error.message,
+                    version: '1.0.0'
+                }
+            });
+
+            await aiModeration.save();
+        }
     }
 }
