@@ -933,6 +933,7 @@ export class DebateService {
         limit: number = 20,
         userId?: string,
         userRole?: string,
+        sortBy?: string,
     ): Promise<{ items: ArgumentDocument[]; totalItems: number; page: number; limit: number }> {
         const normalizedThreadId = Types.ObjectId.isValid(threadId) ? new Types.ObjectId(threadId) : (threadId as any);
         const filter: any = { threadId: normalizedThreadId };
@@ -978,11 +979,24 @@ export class DebateService {
         const skip = Math.max(0, (Number(page) - 1) * Number(limit));
         const take = Math.max(1, Math.min(Number(limit), 100));
 
+        // Determine sort order based on sortBy parameter
+        let sortOrder: any = { createdAt: -1 }; // Default: newest first
+
+        if (sortBy === 'oldest') {
+            sortOrder = { createdAt: 1 }; // Oldest first
+        } else if (sortBy === 'most_liked') {
+            sortOrder = { score: -1, createdAt: -1 }; // Most liked first, then newest
+        } else if (sortBy === 'newest' || !sortBy) {
+            sortOrder = { createdAt: -1 }; // Newest first (default)
+        }
+
         // Debug log for role-based filtering
         console.log('🔍 getArguments Filter Debug:', {
             threadId,
             userRole,
             status,
+            sortBy,
+            sortOrder,
             filter: JSON.stringify(filter, null, 2),
             filterStatus: filter.status,
             isUserRole: userRole === UserRole.USER || userRole === 'USER' || userRole === 'user',
@@ -994,7 +1008,7 @@ export class DebateService {
             this.argumentModel.find(filter)
                 .populate('authorId', 'username email firstName lastName avatar')
                 .populate('moderatedBy', 'username email firstName lastName avatar')
-                .sort({ createdAt: -1 })
+                .sort(sortOrder)
                 .skip(skip)
                 .limit(take)
                 .exec(),
