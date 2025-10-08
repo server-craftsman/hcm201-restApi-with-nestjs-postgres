@@ -350,10 +350,16 @@ export class DebateService {
                 ors.push({ threadId: { $in: generalThreadIds } });
             }
             if (sideAThreadIds.length) {
-                ors.push({ threadId: { $in: sideAThreadIds }, argumentType: ArgumentType.SUPPORT });
+                ors.push({
+                    threadId: { $in: sideAThreadIds },
+                    argumentType: { $in: [ArgumentType.SUPPORT, ArgumentType.NEUTRAL] }
+                });
             }
             if (sideBThreadIds.length) {
-                ors.push({ threadId: { $in: sideBThreadIds }, argumentType: ArgumentType.OPPOSE });
+                ors.push({
+                    threadId: { $in: sideBThreadIds },
+                    argumentType: { $in: [ArgumentType.OPPOSE, ArgumentType.NEUTRAL] }
+                });
             }
             if (!ors.length) {
                 return { items: [], totalItems: 0, page, limit };
@@ -372,18 +378,48 @@ export class DebateService {
         // When sideAwareOr contains simple {threadId} clauses and the baseFilter has argumentType, those will be added above
         moderatorFilter.$or = sideAwareOr;
 
+        // Debug log for troubleshooting
+        console.log('🔍 Moderation Filter Debug:', {
+            moderatorId,
+            sideAThreadIds: sideAThreadIds.length,
+            sideBThreadIds: sideBThreadIds.length,
+            generalThreadIds: generalThreadIds.length,
+            sideAwareOr: sideAwareOr.length,
+            moderatorFilter: JSON.stringify(moderatorFilter, null, 2)
+        });
+
         // If grouping is requested, run two queries with side constraints
         if ((query as any)?.groupBySide) {
             // Build per-side filters respecting moderator's side assignment
             // Filter sideAwareOr to separate SUPPORT and OPPOSE rules
-            const supportRules = sideAwareOr.filter((rule: any) => {
-                // Include rules that are for SUPPORT or don't specify argumentType (general moderator threads)
-                return !rule.argumentType || rule.argumentType === ArgumentType.SUPPORT;
-            });
+            // Build support and oppose rules based on sideAwareOr
+            const supportRules: any[] = [];
+            const opposeRules: any[] = [];
 
-            const opposeRules = sideAwareOr.filter((rule: any) => {
-                // Include rules that are for OPPOSE or don't specify argumentType (general moderator threads)
-                return !rule.argumentType || rule.argumentType === ArgumentType.OPPOSE;
+            for (const rule of sideAwareOr) {
+                if (!rule.argumentType) {
+                    // General moderator threads - include in both
+                    supportRules.push(rule);
+                    opposeRules.push(rule);
+                } else if (rule.argumentType.$in) {
+                    // Side-specific threads with $in filter
+                    if (rule.argumentType.$in.includes(ArgumentType.SUPPORT)) {
+                        supportRules.push(rule);
+                    }
+                    if (rule.argumentType.$in.includes(ArgumentType.OPPOSE)) {
+                        opposeRules.push(rule);
+                    }
+                } else if (rule.argumentType === ArgumentType.SUPPORT) {
+                    supportRules.push(rule);
+                } else if (rule.argumentType === ArgumentType.OPPOSE) {
+                    opposeRules.push(rule);
+                }
+            }
+
+            console.log('🔍 Rules Debug:', {
+                supportRules: supportRules.length,
+                opposeRules: opposeRules.length,
+                sideAwareOr: JSON.stringify(sideAwareOr, null, 2)
             });
 
             // Build filters
@@ -391,11 +427,26 @@ export class DebateService {
             delete supportFilter.threadId;
             delete supportFilter.argumentType;
             if (supportRules.length > 0) {
-                // Ensure all rules have argumentType SUPPORT
-                supportFilter.$or = supportRules.map((rule: any) => ({
-                    ...rule,
-                    argumentType: ArgumentType.SUPPORT
-                }));
+                // Ensure all rules have argumentType SUPPORT or NEUTRAL
+                supportFilter.$or = supportRules.map((rule: any) => {
+                    if (rule.argumentType && rule.argumentType.$in) {
+                        // Keep existing $in filter but ensure it includes SUPPORT
+                        return {
+                            ...rule,
+                            argumentType: {
+                                $in: rule.argumentType.$in.filter((type: any) =>
+                                    type === ArgumentType.SUPPORT || type === ArgumentType.NEUTRAL
+                                )
+                            }
+                        };
+                    } else {
+                        // Add SUPPORT and NEUTRAL filter
+                        return {
+                            ...rule,
+                            argumentType: { $in: [ArgumentType.SUPPORT, ArgumentType.NEUTRAL] }
+                        };
+                    }
+                });
             } else {
                 // No access to SUPPORT arguments - use impossible condition
                 supportFilter._id = { $in: [] }; // Will return empty
@@ -405,15 +456,35 @@ export class DebateService {
             delete opposeFilter.threadId;
             delete opposeFilter.argumentType;
             if (opposeRules.length > 0) {
-                // Ensure all rules have argumentType OPPOSE
-                opposeFilter.$or = opposeRules.map((rule: any) => ({
-                    ...rule,
-                    argumentType: ArgumentType.OPPOSE
-                }));
+                // Ensure all rules have argumentType OPPOSE or NEUTRAL
+                opposeFilter.$or = opposeRules.map((rule: any) => {
+                    if (rule.argumentType && rule.argumentType.$in) {
+                        // Keep existing $in filter but ensure it includes OPPOSE
+                        return {
+                            ...rule,
+                            argumentType: {
+                                $in: rule.argumentType.$in.filter((type: any) =>
+                                    type === ArgumentType.OPPOSE || type === ArgumentType.NEUTRAL
+                                )
+                            }
+                        };
+                    } else {
+                        // Add OPPOSE and NEUTRAL filter
+                        return {
+                            ...rule,
+                            argumentType: { $in: [ArgumentType.OPPOSE, ArgumentType.NEUTRAL] }
+                        };
+                    }
+                });
             } else {
                 // No access to OPPOSE arguments - use impossible condition
                 opposeFilter._id = { $in: [] }; // Will return empty
             }
+
+            console.log('🔍 GroupBySide Debug:', {
+                supportFilter: JSON.stringify(supportFilter, null, 2),
+                opposeFilter: JSON.stringify(opposeFilter, null, 2)
+            });
 
             const [supportItems, supportTotal, opposeItems, opposeTotal] = await Promise.all([
                 this.argumentModel.find(supportFilter)
@@ -434,11 +505,33 @@ export class DebateService {
                 this.argumentModel.countDocuments(opposeFilter),
             ]);
 
+            console.log('🔍 GroupBySide Results:', {
+                supportItems: supportItems.length,
+                supportTotal,
+                opposeItems: opposeItems.length,
+                opposeTotal
+            });
+
             return {
                 support: { items: supportItems, totalItems: supportTotal, page, limit },
                 oppose: { items: opposeItems, totalItems: opposeTotal, page, limit },
             };
         }
+
+        // Debug: Check database content
+        const allArgumentsCount = await this.argumentModel.countDocuments({});
+        const pendingArgumentsCount = await this.argumentModel.countDocuments({ status: ArgumentStatus.PENDING });
+        const neutralArgumentsCount = await this.argumentModel.countDocuments({ argumentType: ArgumentType.NEUTRAL });
+        const supportArgumentsCount = await this.argumentModel.countDocuments({ argumentType: ArgumentType.SUPPORT });
+        const opposeArgumentsCount = await this.argumentModel.countDocuments({ argumentType: ArgumentType.OPPOSE });
+
+        console.log('🔍 Database Debug:', {
+            totalArguments: allArgumentsCount,
+            pendingArguments: pendingArgumentsCount,
+            neutralArguments: neutralArgumentsCount,
+            supportArguments: supportArgumentsCount,
+            opposeArguments: opposeArgumentsCount
+        });
 
         const [items, totalItems] = await Promise.all([
             this.argumentModel
@@ -451,6 +544,20 @@ export class DebateService {
                 .exec(),
             this.argumentModel.countDocuments(moderatorFilter),
         ]);
+
+        console.log('🔍 Query Results:', {
+            itemsFound: items.length,
+            totalItems,
+            items: items.map(item => ({
+                id: item._id,
+                title: item.title,
+                argumentType: item.argumentType,
+                status: item.status,
+                parentArgumentId: item.parentArgumentId,
+                threadId: item.threadId
+            }))
+        });
+
         return { items, totalItems, page, limit };
     }
 
@@ -1070,20 +1177,20 @@ export class DebateService {
             }
 
             // Check side-specific permissions
-            // modForSideA can only moderate SUPPORT arguments (prioritize side-specific role)
-            // modForSideB can only moderate OPPOSE arguments (prioritize side-specific role)
+            // modForSideA can moderate SUPPORT and NEUTRAL arguments
+            // modForSideB can moderate OPPOSE and NEUTRAL arguments
             // If assigned as modForSideA or modForSideB, they MUST respect that side restriction
             // even if they are also in the general moderators array
             if (isModForSideA) {
-                if (argument.argumentType !== ArgumentType.SUPPORT) {
-                    throw new ForbiddenException('You are assigned to moderate SUPPORT arguments only');
+                if (argument.argumentType !== ArgumentType.SUPPORT && argument.argumentType !== ArgumentType.NEUTRAL) {
+                    throw new ForbiddenException('You are assigned to moderate SUPPORT and NEUTRAL arguments only');
                 }
             } else if (isModForSideB) {
-                if (argument.argumentType !== ArgumentType.OPPOSE) {
-                    throw new ForbiddenException('You are assigned to moderate OPPOSE arguments only');
+                if (argument.argumentType !== ArgumentType.OPPOSE && argument.argumentType !== ArgumentType.NEUTRAL) {
+                    throw new ForbiddenException('You are assigned to moderate OPPOSE and NEUTRAL arguments only');
                 }
             }
-            // If they are ONLY in the moderators array (not modForSideA/B), they can moderate both sides
+            // If they are ONLY in the moderators array (not modForSideA/B), they can moderate all sides
         }
 
         // Update argument based on action
@@ -1719,20 +1826,40 @@ export class DebateService {
             sideAwareOr.push({ threadId: { $in: generalThreadIds }, status: ArgumentStatus.PENDING });
         }
         if (sideAThreadIds.length) {
-            sideAwareOr.push({ threadId: { $in: sideAThreadIds }, argumentType: ArgumentType.SUPPORT, status: ArgumentStatus.PENDING });
+            sideAwareOr.push({
+                threadId: { $in: sideAThreadIds },
+                argumentType: { $in: [ArgumentType.SUPPORT, ArgumentType.NEUTRAL] },
+                status: ArgumentStatus.PENDING
+            });
         }
         if (sideBThreadIds.length) {
-            sideAwareOr.push({ threadId: { $in: sideBThreadIds }, argumentType: ArgumentType.OPPOSE, status: ArgumentStatus.PENDING });
+            sideAwareOr.push({
+                threadId: { $in: sideBThreadIds },
+                argumentType: { $in: [ArgumentType.OPPOSE, ArgumentType.NEUTRAL] },
+                status: ArgumentStatus.PENDING
+            });
         }
 
         if (!sideAwareOr.length) {
             return { items: [], totalItems: 0, page: Number(page), limit: Number(limit) };
         }
 
+        // Debug log for troubleshooting
+        console.log('🔍 Pending Moderation Filter Debug:', {
+            moderatorId,
+            sideAThreadIds: sideAThreadIds.length,
+            sideBThreadIds: sideBThreadIds.length,
+            generalThreadIds: generalThreadIds.length,
+            sideAwareOrLength: sideAwareOr.length,
+            sideAwareOr: JSON.stringify(sideAwareOr, null, 2)
+        });
+
         const filter = { $or: sideAwareOr };
 
         const skip = Math.max(0, (Number(page) - 1) * Number(limit));
         const take = Math.max(1, Math.min(Number(limit), 100));
+
+        console.log('🔍 Final Filter for Pending Moderation:', JSON.stringify(filter, null, 2));
 
         const [items, totalItems] = await Promise.all([
             this.argumentModel.find(filter)
@@ -1744,6 +1871,19 @@ export class DebateService {
                 .exec(),
             this.argumentModel.countDocuments(filter),
         ]);
+
+        console.log('🔍 Query Results:', {
+            itemsFound: items.length,
+            totalItems,
+            items: items.map(item => ({
+                id: item._id,
+                title: item.title,
+                argumentType: item.argumentType,
+                status: item.status,
+                parentArgumentId: item.parentArgumentId,
+                threadId: item.threadId
+            }))
+        });
 
         return { items, totalItems, page: Number(page), limit: take };
     }
